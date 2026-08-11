@@ -180,11 +180,16 @@ describe("registerCodeModeTools", () => {
 
   it("propagates downstream MCP cancellation into an active provider call", async () => {
     let providerAborted = false;
+    let markProviderStarted: (() => void) | undefined;
+    const providerStarted = new Promise<void>((resolve) => {
+      markProviderStarted = resolve;
+    });
     const blocking: InMemoryTool = {
       ...echoTool(),
       name: "blocking",
       execute: ({ signal }) =>
         new Promise((_resolve, reject) => {
+          markProviderStarted?.();
           const abort = (): void => {
             providerAborted = true;
             reject(signal.reason);
@@ -207,7 +212,8 @@ describe("registerCodeModeTools", () => {
       },
       { signal: controller.signal },
     );
-    setTimeout(() => controller.abort(new Error("cancel integration test")), 25);
+    await providerStarted;
+    controller.abort(new Error("cancel integration test"));
 
     await expect(pending).rejects.toBeDefined();
     await waitFor(() => providerAborted);
