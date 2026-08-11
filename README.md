@@ -1,8 +1,6 @@
 # CodeModeKit
 
-CodeModeKit is a TypeScript toolkit for turning MCP, OpenAPI, and local tool sources into safe, programmable Code Mode servers. Its current public provider integrates MCP; OpenAPI and local-tool adapters are planned. Model-authored TypeScript runs in a bounded QuickJS/WASM sandbox while `tools.*` calls are routed to trusted host-side providers.
-
-The repository currently contains the M0 walking skeleton, the M1 upstream MCP vertical slice, and the first M2 downstream adapter slice.
+CodeModeKit turns tool sources into safe, programmable Code Mode servers. Today it ships a batteries-included MCP provider; OpenAPI and public local-tool adapters are planned. Model-authored TypeScript runs in a bounded QuickJS/WASM sandbox while `tools.*` calls are routed to trusted host-side providers.
 
 ## Create a server
 
@@ -20,9 +18,27 @@ cd github-code-mode
 npm start
 ```
 
-The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact companion Agent Skill, and catalog-derived TypeScript references. It attempts the initial reference sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
+The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact runtime Agent Skill, catalog-derived TypeScript references, and a self-contained `dist/plugin` artifact. It attempts the initial reference sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
+
+Every scaffold also receives `.agents/skills/build-codemodekit-plugin`, a project-level development skill that teaches compatible coding agents how to maintain the server and plugin. Use `--no-authoring-skill` to omit it. The development skill is not included in the runtime plugin artifact.
 
 The MCP command is parsed into an executable and argument array; the generator never starts a shell. The generated project uses the explicit `allow-all` tool policy for a working starting point. In the GitHub example, the upstream server is independently placed in read-only mode. Choose `--policy deny-all` when the CodeModeKit server should start closed while you define a narrower policy, and use `--no-install` to generate without running `npm install`.
+
+### Build and install the plugin
+
+Generated Agent Plugin projects include a small lifecycle:
+
+```sh
+npm run plugin:sync             # refresh catalog-derived tool types
+npm run plugin:build            # rebuild dist/plugin
+npm run plugin:install:cursor   # build and install a concrete Cursor copy
+npm run plugin:status:cursor
+npm run plugin:uninstall:cursor
+```
+
+`dist/plugin` is dependency-free: it contains the bundled server, QuickJS WASM, manifests, and runtime skill, but never copies `node_modules`, `.env`, or source files. Its portable `mcp.json` uses `${PLUGIN_ROOT}`. Cursor currently needs concrete paths, so its installer copies the artifact under `~/.cursor/plugins/local`, resolves the active Node executable and server path, and asks you to reload the Cursor window. Re-run the install command after changing source, policy, metadata, or generated references.
+
+The CLI also accepts `--plugin-name`, `--skill-name`, `--plugin-description`, and `--plugin-license` when preparing a distributable plugin.
 
 The hand-written equivalent is intentionally small:
 
@@ -54,6 +70,20 @@ await serveCodeModeStdio({
 
 TypeScript compilation and QuickJS are the batteries-included runtime and stay out of the beginner API. Source helpers are available for `mcp.stdio`, `mcp.http` / `mcp.streamableHttp`, and `mcp.sse`. Limits, reconnect behavior, transport settings, search, and policy remain configurable. The facade defaults to a 120-second execution wall time, a 60-second upstream call timeout, 60-second MCP connect/discovery timeouts, and a 32 MiB stdio buffer; the lower-level packages retain their existing defaults.
 
+Add an observer when the host needs metrics, traces, or audit correlation:
+
+```js
+await serveCodeModeStdio({
+  name: "my-code-mode",
+  version: "0.1.0",
+  toolPolicy: allowAllToolCalls(),
+  sources,
+  observer: (event) => console.error(JSON.stringify(event)),
+});
+```
+
+Observation events include timestamps, execution and call IDs, source/tool names, byte counts, durations, outcomes, and stable error codes. They deliberately exclude authored code, tool inputs, tool results, logs, diagnostic messages, and credentials. Observer failures are isolated from execution.
+
 To serve Streamable HTTP instead, switch the host function:
 
 ```js
@@ -82,8 +112,8 @@ HTTP binds to `127.0.0.1` at `/mcp` by default. A non-loopback bind must explici
 - `@codemodekit/mcp`: SDK-owned MCP clients, upstream transport configuration, tool discovery, model-visibility filtering, invocation, cancellation, and host-only MCP sideband.
 - `@codemodekit/sandbox-quickjs`: isolated QuickJS/WASM implementation with a pruned global surface and asynchronous host bridge.
 - `codemodekit`: batteries-included Code Mode construction plus stdio and Streamable HTTP hosts.
-- `create-codemodekit`: command-driven one-file project scaffolder.
-- `skills/build-codemodekit-plugin`: installable authoring guidance for creating and maintaining portable CodeModeKit Agent Plugins.
+- `create-codemodekit`: command-driven one-file project, Agent Plugin, authoring-skill, build, and Cursor-install tooling.
+- `packages/create-codemodekit/skills/build-codemodekit-plugin`: packaged authoring guidance installed into generated projects.
 - `tests/support/InMemoryTestToolProvider`: private deterministic provider fixture. It is not a supported local-tool provider.
 
 ## Development
@@ -94,9 +124,10 @@ Requirements: Node.js 20+ and pnpm 11.
 pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm test
+pnpm run test:package
 ```
 
-The test suite runs the walking skeleton against both the release QuickJS build and its leak-detecting debug build.
+The test suite runs the walking skeleton against both the release QuickJS build and its leak-detecting debug build. The package smoke test packs all five public packages, installs those tarballs in a clean project, scaffolds and bundles a plugin, then calls `run_typescript` through the resulting artifact.
 
 ## Runnable stdio server
 
@@ -233,14 +264,18 @@ The loader reads only local root `plugin.json` and `mcp.json` files. It does not
 - A shared provider-conformance suite run against both real MCP stdio and the private provider-neutral fixture.
 - Agent Plugins 1.0.0 `plugin.json` and `mcp.json` loading with contained paths, `PLUGIN_ROOT`/`PLUGIN_DATA`, literal remote headers, and per-entry isolation.
 - Agent Plugins 1.0 scaffolding with a companion Agent Skill and revisioned catalog-derived TypeScript references.
+- Self-contained Agent Plugin bundling with portable manifests and QuickJS WASM.
+- Project-local CodeModeKit authoring skills and concrete Cursor install/status/uninstall lifecycle commands.
+- Official Agent Plugins schema checks, Agent Skills conformance checks, and clean packed-consumer smoke coverage.
 - MCP Apps model-visibility filtering: app-only tools are not exposed to authored code.
 - Actionable, catchable upstream MCP tool errors and cancellation propagation.
 - Actionable compile and sandbox diagnostics returned as values.
+- Payload-free execution/tool observation events for metrics, tracing, and audit correlation.
 
 ## Not implemented yet
 
 - Agent Plugin skill discovery and delivery by CodeModeKit itself. Generated plugins already package skills for compatible clients.
-- Complete v0.1 progress, health, diagnostic, and conformance surfaces.
+- Complete v0.1 health and observability surfaces.
 - Public local-function and OpenAPI providers; these remain v2 work.
 
 See [the v0.1 plan](docs/plan/v0.1.md) and [architecture](docs/architecture/code-mode.md) for the accepted design.

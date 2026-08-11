@@ -7,6 +7,8 @@ import type {
   CatalogDiagnosticsRequest,
   CatalogDiagnosticsResult,
   CodeCompiler,
+  CodeModeObservation,
+  CodeModeObserver,
   CodeModeRunRequest,
   CodeModeRunResult,
   CodeModeProgress,
@@ -32,6 +34,8 @@ export interface CodeModeOptions {
   readonly providers: readonly ToolProvider[];
   readonly limits?: Partial<ExecutionLimits>;
   readonly reconnect?: Partial<ReconnectOptions>;
+  /** Receives safe lifecycle metadata without authored code or tool payloads. */
+  readonly observer?: CodeModeObserver;
 }
 
 export class CodeMode {
@@ -40,6 +44,7 @@ export class CodeMode {
   readonly #policy: ToolPolicy;
   readonly #limits: ExecutionLimits;
   readonly #catalogManager: CatalogManager;
+  readonly #observer: CodeModeObserver | undefined;
 
   constructor(options: CodeModeOptions) {
     if (typeof options.toolPolicy !== "function") {
@@ -60,6 +65,7 @@ export class CodeMode {
     this.#compiler = options.compiler;
     this.#sandbox = options.sandbox;
     this.#policy = options.toolPolicy;
+    this.#observer = options.observer;
     this.#limits = resolveExecutionLimits(options.limits);
     this.#catalogManager = new CatalogManager(
       [...options.providers],
@@ -75,13 +81,39 @@ export class CodeMode {
     const executionId = randomUUID();
     const logs: readonly SandboxLogEntry[] = [];
     const progress = createProgressEmitter(request.onProgress);
+    const observation = createObservationEmitter(this.#observer);
+    const executionStartedAt = performance.now();
+    const sourceBytes = utf8Bytes(request.code);
+    observation.emit({
+      type: "execution_started",
+      timestampMs: Date.now(),
+      executionId,
+      sourceBytes,
+    });
+    const complete = (result: CodeModeRunResult): CodeModeRunResult => {
+      observation.emit({
+        type: "execution_completed",
+        timestampMs: Date.now(),
+        executionId,
+        ok: result.ok,
+        durationMs: elapsedMs(executionStartedAt),
+        logEntries: result.logs.length,
+        ...(result.ok
+          ? {}
+          : {
+              errorCode: result.diagnostic.code,
+              phase: result.diagnostic.phase,
+            }),
+      });
+      return result;
+    };
 
     if (request.signal?.aborted === true) {
-      return cancelled(executionId);
+      return complete(cancelled(executionId));
     }
 
-    if (utf8Bytes(request.code) > this.#limits.sourceBytes) {
-      return {
+    if (sourceBytes > this.#limits.sourceBytes) {
+      return complete({
         ok: false,
         executionId,
         diagnostic: {
@@ -90,7 +122,7 @@ export class CodeMode {
           message: `Source exceeds the ${this.#limits.sourceBytes}-byte limit`,
         },
         logs,
-      };
+      });
     }
 
     progress.emit({
@@ -99,12 +131,12 @@ export class CodeMode {
     });
     const compiled = this.#compiler.compile(request.code);
     if (!compiled.ok) {
-      return {
+      return complete({
         ok: false,
         executionId,
         diagnostic: compiled.diagnostic,
         logs,
-      };
+      });
     }
     progress.emit({
       phase: "compile_completed",
@@ -129,6 +161,7 @@ export class CodeMode {
         policy: this.#policy,
         signal: wallController.signal,
         onProgress: (event) => progress.emit(event),
+        onObservation: (event) => observation.emit(event),
       });
       progress.emit({
         phase: "sandbox_started",
@@ -166,13 +199,13 @@ export class CodeMode {
         phase: "execution_completed",
         message: "Execution completed",
       });
-      return result;
+      return complete(result);
     } catch (error) {
       if (!wallController.signal.aborted) {
         wallController.abort(error);
       }
       if (wallTimedOut) {
-        return {
+        return complete({
           ok: false,
           executionId,
           diagnostic: {
@@ -181,23 +214,25 @@ export class CodeMode {
             message: `Execution exceeded ${this.#limits.wallTimeMs}ms wall time`,
           },
           logs: error instanceof CodeModeError ? error.logs : logs,
-        };
+        });
       }
       if (isAborted(request.signal)) {
-        return cancelled(
-          executionId,
-          error instanceof CodeModeError ? error.logs : logs,
+        return complete(
+          cancelled(
+            executionId,
+            error instanceof CodeModeError ? error.logs : logs,
+          ),
         );
       }
       if (error instanceof CodeModeError) {
-        return {
+        return complete({
           ok: false,
           executionId,
           diagnostic: error.diagnostic,
           logs: error.logs,
-        };
+        });
       }
-      return {
+      return complete({
         ok: false,
         executionId,
         diagnostic: {
@@ -206,7 +241,7 @@ export class CodeMode {
           message: "Code Mode execution failed",
         },
         logs,
-      };
+      });
     } finally {
       clearTimeout(wallTimer);
       request.signal?.removeEventListener("abort", onCallerAbort);
@@ -244,6 +279,28 @@ export class CodeMode {
     await this.#catalogManager.start(signal);
     return this.#catalogManager.catalog;
   }
+}
+
+function createObservationEmitter(
+  observer: CodeModeObserver | undefined,
+): { emit(event: CodeModeObservation): void } {
+  return {
+    emit(event): void {
+      if (observer === undefined) return;
+      const delivered = Object.freeze({ ...event }) as CodeModeObservation;
+      queueMicrotask(() => {
+        try {
+          Promise.resolve(observer(delivered)).catch(() => undefined);
+        } catch {
+          // Observation is advisory and cannot affect execution.
+        }
+      });
+    },
+  };
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
 }
 
 function createProgressEmitter(

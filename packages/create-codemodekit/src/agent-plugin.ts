@@ -106,8 +106,7 @@ export async function scaffoldAgentPlugin(
       [serverName]: {
         type: "stdio",
         command: "node",
-        args: [`\${PLUGIN_ROOT}/${entrypoint}`],
-        cwd: "${PLUGIN_ROOT}",
+        args: ["${PLUGIN_ROOT}/dist/plugin/server.mjs"],
       },
     },
   };

@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,10 +16,14 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { loadAgentPlugin } from "@codemodekit/mcp";
 import {
+  buildAgentPlugin,
+  getCursorPluginStatus,
+  installCursorPlugin,
   parseMcpCommand,
   scaffoldAgentPlugin,
   scaffoldCodeModeMcp,
   syncAgentPluginSkill,
+  uninstallCursorPlugin,
 } from "create-codemodekit";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -20,6 +32,7 @@ const fixturePath = fileURLToPath(
   new URL("./fixtures/mcp-stdio-server.mjs", import.meta.url),
 );
 const execFileAsync = promisify(execFile);
+const codemodekitPackageRoot = path.join(workspaceRoot, "packages", "codemodekit");
 const clients: Client[] = [];
 const tempDirectories: string[] = [];
 
@@ -139,6 +152,15 @@ describe("create-codemodekit", () => {
       skillName: "use-fixture-codemode",
       synced: false,
     });
+    expect(result.authoringSkillDirectory).toBe(
+      path.join(directory, ".agents", "skills", "build-codemodekit-plugin"),
+    );
+    expect(
+      await readFile(
+        path.join(result.authoringSkillDirectory ?? "", "SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("# Build a CodeModeKit Plugin");
     expect(JSON.parse(await readFile(path.join(directory, "plugin.json"), "utf8"))).toMatchObject({
       $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
       name: expect.stringMatching(/^scaffold-plugin-/),
@@ -149,7 +171,7 @@ describe("create-codemodekit", () => {
         "fixture-code-mode": {
           type: "stdio",
           command: "node",
-          args: ["${PLUGIN_ROOT}/src/server.mjs"],
+          args: ["${PLUGIN_ROOT}/dist/plugin/server.mjs"],
         },
       },
     });
@@ -215,6 +237,91 @@ describe("create-codemodekit", () => {
       sources: [{ source: "fixture", status: "healthy", toolCount: 4 }],
     });
   }, 20_000);
+
+  it("builds a self-contained portable plugin that launches without node_modules", async () => {
+    const directory = await generatedPluginProject("build");
+    const result = await buildAgentPlugin({ root: directory });
+
+    expect(result.artifactDirectory).toBe(path.join(directory, "dist", "plugin"));
+    expect((await lstat(result.server)).isFile()).toBe(true);
+    expect(
+      (await lstat(path.join(result.artifactDirectory, "emscripten-module.wasm"))).isFile(),
+    ).toBe(true);
+    await expectPathMissing(path.join(result.artifactDirectory, "node_modules"));
+    await expectPathMissing(path.join(result.artifactDirectory, ".env"));
+    await expectPathMissing(path.join(result.artifactDirectory, ".agents"));
+
+    const mcpConfig = JSON.parse(
+      await readFile(path.join(result.artifactDirectory, "mcp.json"), "utf8"),
+    ) as {
+      mcpServers: Record<string, { command: string; args: string[]; cwd?: string }>;
+    };
+    expect(mcpConfig.mcpServers["fixture-code-mode"]).toEqual({
+      type: "stdio",
+      command: "node",
+      args: ["${PLUGIN_ROOT}/server.mjs"],
+    });
+
+    const client = await connectToServer(result.server, path.dirname(workspaceRoot));
+    const execution = await client.callTool({
+      name: "run_typescript",
+      arguments: {
+        code: `
+          const result = await tools.fixture.echo({ value: "bundled" });
+          return result.structuredContent.value;
+        `,
+      },
+    });
+    expect(execution).toMatchObject({
+      structuredContent: { ok: true, value: "bundled" },
+    });
+  }, 30_000);
+
+  it("installs a concrete Cursor copy with resolved runtime paths", async () => {
+    const directory = await generatedPluginProject("cursor");
+    const cursorHome = await mkdtemp(path.join(workspaceRoot, ".cursor-home-"));
+    tempDirectories.push(cursorHome);
+    await writeFile(path.join(directory, ".env"), "SECRET_DO_NOT_COPY=test\n", "utf8");
+
+    const installation = await installCursorPlugin({
+      root: directory,
+      cursorHome,
+      nodePath: process.execPath,
+    });
+    const installedDetails = await lstat(installation.destination);
+    expect(installedDetails.isDirectory()).toBe(true);
+    expect(installedDetails.isSymbolicLink()).toBe(false);
+    await expectPathMissing(path.join(installation.destination, ".env"));
+    await expectPathMissing(path.join(installation.destination, "node_modules"));
+    await expectPathMissing(path.join(installation.destination, "src"));
+
+    const installedMcp = JSON.parse(
+      await readFile(path.join(installation.destination, "mcp.json"), "utf8"),
+    ) as {
+      mcpServers: Record<string, { command: string; args: string[]; cwd?: string }>;
+    };
+    expect(installedMcp.mcpServers["fixture-code-mode"]).toEqual({
+      type: "stdio",
+      command: process.execPath,
+      args: [path.join(installation.destination, "server.mjs")],
+    });
+
+    const installedServer = installedMcp.mcpServers["fixture-code-mode"]?.args[0];
+    expect(installedServer).toBeDefined();
+    const client = await connectToServer(installedServer ?? "", path.dirname(workspaceRoot));
+    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual([
+      "run_typescript",
+      "search_tools",
+    ]);
+
+    expect(
+      await getCursorPluginStatus({ root: directory, cursorHome }),
+    ).toMatchObject({ installed: true, destination: installation.destination });
+    expect(
+      await uninstallCursorPlugin({ root: directory, cursorHome }),
+    ).toMatchObject({ installed: false, destination: installation.destination });
+    await expectPathMissing(installation.destination);
+  }, 30_000);
 
   it("refuses to publish a partial catalog as complete skill documentation", async () => {
     const directory = await mkdtemp(path.join(workspaceRoot, ".scaffold-degraded-"));
@@ -321,3 +428,55 @@ describe("create-codemodekit", () => {
     });
   }, 20_000);
 });
+
+async function generatedPluginProject(label: string): Promise<string> {
+  const directory = await mkdtemp(
+    path.join(workspaceRoot, `.scaffold-${label}-`),
+  );
+  tempDirectories.push(directory);
+  await scaffoldCodeModeMcp({
+    targetDirectory: directory,
+    mcpName: "fixture",
+    mcpCommand: { command: process.execPath, args: [fixturePath] },
+    serverName: "fixture-code-mode",
+    agentPlugin: true,
+    install: false,
+  });
+  const modules = path.join(directory, "node_modules");
+  await mkdir(modules, { recursive: true });
+  await symlink(
+    codemodekitPackageRoot,
+    path.join(modules, "codemodekit"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  return directory;
+}
+
+async function connectToServer(server: string, cwd: string): Promise<Client> {
+  const client = new Client(
+    { name: "plugin-distribution-client", version: "1.0.0" },
+    {
+      versionNegotiation: {
+        mode: "auto",
+        probe: { timeoutMs: 5_000, maxRetries: 0 },
+      },
+      inputRequired: { autoFulfill: false },
+    },
+  );
+  clients.push(client);
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [server],
+      cwd,
+      env: { PATH: process.env.PATH ?? "" },
+      stderr: "pipe",
+    }),
+    { timeout: 10_000 },
+  );
+  return client;
+}
+
+async function expectPathMissing(file: string): Promise<void> {
+  await expect(lstat(file)).rejects.toMatchObject({ code: "ENOENT" });
+}

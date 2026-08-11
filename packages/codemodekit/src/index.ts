@@ -19,4 +19,9 @@ export {
 } from "./sources.js";
 
 export { allowAllToolCalls, denyAllToolCalls } from "@codemodekit/core";
-export type { ToolPolicy, ToolProvider } from "@codemodekit/core";
+export type {
+  CodeModeObservation,
+  CodeModeObserver,
+  ToolPolicy,
+  ToolProvider,
+} from "@codemodekit/core";

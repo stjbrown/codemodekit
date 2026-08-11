@@ -2,6 +2,7 @@ import type { ErrorObject } from "ajv";
 
 import type {
   ExecutionLimits,
+  CodeModeObservation,
   CodeModeProgress,
   ProviderToolResult,
   SandboxToolCall,
@@ -22,6 +23,7 @@ export class ExecutionToolBridge {
   readonly #rootSignal: AbortSignal;
   readonly #semaphore: Semaphore;
   readonly #onProgress: ((event: Omit<CodeModeProgress, "sequence">) => void) | undefined;
+  readonly #onObservation: ((event: CodeModeObservation) => void) | undefined;
 
   #callCount = 0;
   #bridgeBytes = 0;
@@ -33,6 +35,7 @@ export class ExecutionToolBridge {
     readonly policy: ToolPolicy;
     readonly signal: AbortSignal;
     readonly onProgress?: (event: Omit<CodeModeProgress, "sequence">) => void;
+    readonly onObservation?: (event: CodeModeObservation) => void;
   }) {
     this.#catalog = options.catalog;
     this.#executionId = options.executionId;
@@ -40,6 +43,7 @@ export class ExecutionToolBridge {
     this.#policy = options.policy;
     this.#rootSignal = options.signal;
     this.#onProgress = options.onProgress;
+    this.#onObservation = options.onObservation;
     this.#semaphore = new Semaphore(options.limits.maxConcurrentToolCalls);
   }
 
@@ -105,6 +109,8 @@ export class ExecutionToolBridge {
     }
 
     const callId = `${this.#executionId}:tool:${callNumber}`;
+    const observedAt = performance.now();
+    const inputBytes = utf8Bytes(inputJson);
     this.#onProgress?.({
       phase: "tool_queued",
       message: `${call.source}.${call.tool}: queued`,
@@ -112,122 +118,169 @@ export class ExecutionToolBridge {
       tool: call.tool,
       callId,
     });
-
-    this.#addBridgeBytes(utf8Bytes(inputJson), call);
-
-    let release: () => void;
-    try {
-      release = await this.#semaphore.acquire(this.#rootSignal);
-    } catch {
-      this.#throwIfCancelled();
-      throw this.#toolError(
-        "TOOL_EXECUTION_FAILED",
-        "Tool call could not enter the execution queue",
-        call,
-      );
-    }
+    this.#onObservation?.({
+      type: "tool_call_queued",
+      timestampMs: Date.now(),
+      executionId: this.#executionId,
+      callId,
+      source: call.source,
+      tool: call.tool,
+      inputBytes,
+    });
 
     try {
-      let decision;
+      this.#addBridgeBytes(inputBytes, call);
+
+      let release: () => void;
       try {
-        decision = await this.#policy({
+        release = await this.#semaphore.acquire(this.#rootSignal);
+      } catch {
+        this.#throwIfCancelled();
+        throw this.#toolError(
+          "TOOL_EXECUTION_FAILED",
+          "Tool call could not enter the execution queue",
+          call,
+        );
+      }
+
+      try {
+        let decision;
+        try {
+          decision = await this.#policy({
+            executionId: this.#executionId,
+            callId,
+            source: call.source,
+            tool: call.tool,
+            input: call.input,
+            ...(entry.definition.annotations === undefined
+              ? {}
+              : { annotations: entry.definition.annotations }),
+            signal: this.#rootSignal,
+          });
+        } catch {
+          this.#throwIfCancelled();
+          throw this.#toolError(
+            "TOOL_APPROVAL_DENIED",
+            `Authorization failed closed for ${call.source}.${call.tool}`,
+            call,
+            "policy",
+          );
+        }
+
+        if (!isPolicyDecision(decision)) {
+          throw this.#toolError(
+            "TOOL_APPROVAL_DENIED",
+            `Authorization failed closed for ${call.source}.${call.tool}`,
+            call,
+            "policy",
+          );
+        }
+
+        if (decision.decision !== "allow") {
+          const suffix =
+            decision.reason === undefined
+              ? ""
+              : `: ${decision.reason.slice(0, 256)}`;
+          throw this.#toolError(
+            "TOOL_APPROVAL_DENIED",
+            `Tool call was denied${suffix}`,
+            call,
+            "policy",
+          );
+        }
+
+        this.#onProgress?.({
+          phase: "tool_started",
+          message: `${call.source}.${call.tool}: started`,
+          source: call.source,
+          tool: call.tool,
+          callId,
+        });
+        this.#onObservation?.({
+          type: "tool_call_started",
+          timestampMs: Date.now(),
           executionId: this.#executionId,
           callId,
           source: call.source,
           tool: call.tool,
-          input: call.input,
-          ...(entry.definition.annotations === undefined
-            ? {}
-            : { annotations: entry.definition.annotations }),
-          signal: this.#rootSignal,
+          queuedDurationMs: elapsedMs(observedAt),
         });
-      } catch {
-        this.#throwIfCancelled();
-        throw this.#toolError(
-          "TOOL_APPROVAL_DENIED",
-          `Authorization failed closed for ${call.source}.${call.tool}`,
+
+        const result = await this.#invokeWithTimeout(
+          (signal) =>
+            entry.provider.call({
+              executionId: this.#executionId,
+              callId,
+              tool: call.tool,
+              input: call.input,
+              signal,
+            }),
           call,
-          "policy",
         );
-      }
+        const sandboxResult = validateProviderResult(result, call);
 
-      if (!isPolicyDecision(decision)) {
-        throw this.#toolError(
-          "TOOL_APPROVAL_DENIED",
-          `Authorization failed closed for ${call.source}.${call.tool}`,
-          call,
-          "policy",
-        );
-      }
-
-      if (decision.decision !== "allow") {
-        const suffix =
-          decision.reason === undefined
-            ? ""
-            : `: ${decision.reason.slice(0, 256)}`;
-        throw this.#toolError(
-          "TOOL_APPROVAL_DENIED",
-          `Tool call was denied${suffix}`,
-          call,
-          "policy",
-        );
-      }
-
-      this.#onProgress?.({
-        phase: "tool_started",
-        message: `${call.source}.${call.tool}: started`,
-        source: call.source,
-        tool: call.tool,
-        callId,
-      });
-
-      const result = await this.#invokeWithTimeout(
-        (signal) =>
-          entry.provider.call({
-            executionId: this.#executionId,
-            callId,
+        if (
+          entry.validateOutput !== undefined &&
+          !entry.validateOutput(sandboxResult.structuredContent)
+        ) {
+          throw new CodeModeError({
+            code: "TOOL_RESULT_INVALID",
+            phase: "tool",
+            message: `Structured result from ${call.source}.${call.tool} does not match its schema`,
+            source: call.source,
             tool: call.tool,
-            input: call.input,
-            signal,
-          }),
-        call,
-      );
-      const sandboxResult = validateProviderResult(result, call);
+            validation: cloneValidationErrors(entry.validateOutput.errors),
+          });
+        }
 
-      if (
-        entry.validateOutput !== undefined &&
-        !entry.validateOutput(sandboxResult.structuredContent)
-      ) {
-        throw new CodeModeError({
-          code: "TOOL_RESULT_INVALID",
-          phase: "tool",
-          message: `Structured result from ${call.source}.${call.tool} does not match its schema`,
+        const resultJson = stringifyJson(sandboxResult);
+        const resultBytes = utf8Bytes(resultJson);
+        if (resultBytes > this.#limits.toolResultBytes) {
+          throw this.#toolError(
+            "TOOL_RESULT_TOO_LARGE",
+            `Tool result exceeds the ${this.#limits.toolResultBytes}-byte limit`,
+            call,
+          );
+        }
+        this.#addBridgeBytes(resultBytes, call);
+        this.#onProgress?.({
+          phase: "tool_completed",
+          message: `${call.source}.${call.tool}: completed`,
           source: call.source,
           tool: call.tool,
-          validation: cloneValidationErrors(entry.validateOutput.errors),
+          callId,
         });
+        this.#onObservation?.({
+          type: "tool_call_completed",
+          timestampMs: Date.now(),
+          executionId: this.#executionId,
+          callId,
+          source: call.source,
+          tool: call.tool,
+          ok: true,
+          durationMs: elapsedMs(observedAt),
+          resultBytes,
+        });
+        return sandboxResult;
+      } finally {
+        release();
       }
-
-      const resultJson = stringifyJson(sandboxResult);
-      const resultBytes = utf8Bytes(resultJson);
-      if (resultBytes > this.#limits.toolResultBytes) {
-        throw this.#toolError(
-          "TOOL_RESULT_TOO_LARGE",
-          `Tool result exceeds the ${this.#limits.toolResultBytes}-byte limit`,
-          call,
-        );
-      }
-      this.#addBridgeBytes(resultBytes, call);
-      this.#onProgress?.({
-        phase: "tool_completed",
-        message: `${call.source}.${call.tool}: completed`,
+    } catch (error) {
+      const diagnostic =
+        error instanceof CodeModeError ? error.diagnostic : undefined;
+      this.#onObservation?.({
+        type: "tool_call_completed",
+        timestampMs: Date.now(),
+        executionId: this.#executionId,
+        callId,
         source: call.source,
         tool: call.tool,
-        callId,
+        ok: false,
+        durationMs: elapsedMs(observedAt),
+        errorCode: diagnostic?.code ?? "TOOL_EXECUTION_FAILED",
+        phase: diagnostic?.phase ?? "tool",
       });
-      return sandboxResult;
-    } finally {
-      release();
+      throw error;
     }
   }
 
@@ -322,6 +375,10 @@ export class ExecutionToolBridge {
       tool: call.tool,
     });
   }
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
 }
 
 function validateProviderResult(

@@ -4,6 +4,8 @@ export type {
   CodeCompiler,
   CodeModeRunRequest,
   CodeModeRunResult,
+  CodeModeObservation,
+  CodeModeObserver,
   CodeModeProgress,
   CodeSandbox,
   CatalogDiagnostic,

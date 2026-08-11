@@ -2,6 +2,7 @@ import {
   CodeMode,
   TypeScriptCompiler,
   type ExecutionLimits,
+  type CodeModeObserver,
   type ReconnectOptions,
   type StartupReport,
   type ToolPolicy,
@@ -19,6 +20,8 @@ export interface CodeModeMcpOptions {
   readonly sources: readonly ToolProvider[];
   readonly limits?: Partial<ExecutionLimits>;
   readonly reconnect?: Partial<ReconnectOptions>;
+  /** Receives safe execution and tool lifecycle metadata. */
+  readonly observer?: CodeModeObserver;
   /** Register bounded catalog search alongside run_typescript. Defaults to true. */
   readonly search?: boolean;
 }
@@ -64,6 +67,7 @@ export function createCodeModeMcp(
     ...(options.reconnect === undefined
       ? {}
       : { reconnect: options.reconnect }),
+    ...(options.observer === undefined ? {} : { observer: options.observer }),
   });
 
   return {

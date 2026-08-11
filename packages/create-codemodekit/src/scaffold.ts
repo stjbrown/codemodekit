@@ -8,11 +8,12 @@ import {
   scaffoldAgentPlugin,
   type ScaffoldAgentPluginResult,
 } from "./agent-plugin.js";
+import { installProjectAuthoringSkill } from "./authoring-skill.js";
 import type { ParsedCommand } from "./command.js";
 
 const PACKAGE_VERSION = readPackageVersion();
 // The generator and batteries-included runtime release independently.
-const DEFAULT_CODEMODEKIT_VERSION = "^0.1.0";
+const DEFAULT_CODEMODEKIT_VERSION = "^0.2.0";
 const DEFAULT_CREATE_CODEMODEKIT_VERSION = `^${PACKAGE_VERSION}`;
 
 export interface AgentPluginScaffoldOptions {
@@ -33,6 +34,8 @@ export interface ScaffoldCodeModeMcpOptions {
   readonly policy?: "allow-all" | "deny-all";
   /** Generate a portable Agent Plugins 1.0 package and companion skill. */
   readonly agentPlugin?: boolean | AgentPluginScaffoldOptions;
+  /** Install project-local authoring guidance under .agents/skills. Defaults to true. */
+  readonly authoringSkill?: boolean;
   readonly install?: boolean;
   /** Override the generated runtime dependency, including with a file: specifier. */
   readonly codemodekitVersion?: string;
@@ -44,12 +47,15 @@ export interface ScaffoldCodeModeMcpOptions {
 export interface GeneratedAgentPluginResult extends ScaffoldAgentPluginResult {
   readonly synced: boolean;
   readonly syncError?: string;
+  readonly built: boolean;
+  readonly artifactDirectory?: string;
 }
 
 export interface ScaffoldResult {
   readonly directory: string;
   readonly entrypoint: string;
   readonly installed: boolean;
+  readonly authoringSkillDirectory?: string;
   readonly agentPlugin?: GeneratedAgentPluginResult;
 }
 
@@ -68,6 +74,7 @@ export async function scaffoldCodeModeMcp(
   );
   const policy = options.policy ?? "allow-all";
   const install = options.install ?? true;
+  const includeAuthoringSkill = options.authoringSkill ?? true;
   const agentPluginOptions = resolveAgentPluginOptions(options.agentPlugin);
   const pluginName =
     agentPluginOptions === undefined
@@ -105,7 +112,13 @@ export async function scaffoldCodeModeMcp(
       start: "node src/server.mjs",
       ...(agentPluginOptions === undefined
         ? {}
-        : { "plugin:sync": "node src/server.mjs --sync-plugin" }),
+        : {
+            "plugin:sync": "node src/server.mjs --sync-plugin",
+            "plugin:build": "codemodekit-plugin build",
+            "plugin:install:cursor": "codemodekit-plugin install cursor",
+            "plugin:status:cursor": "codemodekit-plugin status cursor",
+            "plugin:uninstall:cursor": "codemodekit-plugin uninstall cursor",
+          }),
     },
     dependencies: { "codemodekit": codemodekitVersion },
     ...(agentPluginOptions === undefined
@@ -130,6 +143,19 @@ export async function scaffoldCodeModeMcp(
       "utf8",
     ),
     writeFile(
+      path.join(directory, "README.md"),
+      renderProjectReadme({
+        packageName,
+        serverName,
+        mcpName,
+        mcpCommand: options.mcpCommand,
+        policy,
+        agentPlugin: agentPluginOptions !== undefined,
+        authoringSkill: includeAuthoringSkill,
+      }),
+      "utf8",
+    ),
+    writeFile(
       entrypoint,
       renderServer({
         serverName,
@@ -143,6 +169,10 @@ export async function scaffoldCodeModeMcp(
       "utf8",
     ),
   ]);
+
+  const authoringSkillDirectory = includeAuthoringSkill
+    ? await installProjectAuthoringSkill({ root: directory })
+    : undefined;
 
   let generatedPlugin: ScaffoldAgentPluginResult | undefined;
   if (
@@ -182,17 +212,30 @@ export async function scaffoldCodeModeMcp(
     }
   }
 
+  let built = false;
+  let artifactDirectory: string | undefined;
+  if (generatedPlugin !== undefined && install) {
+    await runPluginBuild(directory);
+    built = true;
+    artifactDirectory = path.join(directory, "dist", "plugin");
+  }
+
   return {
     directory,
     entrypoint,
     installed: install,
+    ...(authoringSkillDirectory === undefined
+      ? {}
+      : { authoringSkillDirectory }),
     ...(generatedPlugin === undefined
       ? {}
       : {
           agentPlugin: {
             ...generatedPlugin,
             synced,
+            built,
             ...(syncError === undefined ? {} : { syncError }),
+            ...(artifactDirectory === undefined ? {} : { artifactDirectory }),
           },
         }),
   };
@@ -206,6 +249,67 @@ interface RenderServerOptions {
   readonly agentPlugin?: {
     readonly skillName: string;
   };
+}
+
+interface RenderProjectReadmeOptions {
+  readonly packageName: string;
+  readonly serverName: string;
+  readonly mcpName: string;
+  readonly mcpCommand: ParsedCommand;
+  readonly policy: "allow-all" | "deny-all";
+  readonly agentPlugin: boolean;
+  readonly authoringSkill: boolean;
+}
+
+function renderProjectReadme(options: RenderProjectReadmeOptions): string {
+  const pluginSection = options.agentPlugin
+    ? `
+## Agent Plugin
+
+Refresh the companion skill after the upstream tool catalog changes, then rebuild the self-contained plugin:
+
+\`\`\`sh
+npm run plugin:sync
+npm run plugin:build
+\`\`\`
+
+The portable package is written to \`dist/plugin\`; it does not require this project's \`node_modules\`. Credentials and \`.env\` files are never copied into it.
+
+For Cursor, install a concrete local copy and reload the window:
+
+\`\`\`sh
+npm run plugin:install:cursor
+\`\`\`
+
+Run \`npm run plugin:status:cursor\` to inspect it and \`npm run plugin:uninstall:cursor\` to remove it. Reinstall after changing source, policy, metadata, or generated references.
+`
+    : "";
+  const authoringSection = options.authoringSkill
+    ? `
+## Development guidance
+
+The project-local \`.agents/skills/build-codemodekit-plugin\` skill gives compatible coding agents the CodeModeKit authoring and maintenance workflow.
+`
+    : "";
+  return `# ${options.packageName}
+
+Code Mode MCP server generated by [CodeModeKit](https://github.com/stjbrown/codemodekit).
+
+## Run
+
+\`\`\`sh
+npm start
+\`\`\`
+
+The downstream server is \`${options.serverName}\`. It wraps the \`${options.mcpName}\` source using this shell-free process configuration:
+
+\`\`\`json
+${JSON.stringify(options.mcpCommand, null, 2)}
+\`\`\`
+
+The generated tool policy is \`${options.policy}\`. Review \`src/server.mjs\` before exposing the server, and keep credentials in uncommitted environment files or the upstream tool's supported secret mechanism.
+${pluginSection}${authoringSection}
+`;
 }
 
 export function renderServer(options: RenderServerOptions): string {
@@ -312,6 +416,15 @@ function runPluginSync(directory: string): Promise<void> {
     ["run", "plugin:sync"],
     directory,
     "Agent Plugin catalog sync",
+  );
+}
+
+function runPluginBuild(directory: string): Promise<void> {
+  return runCommand(
+    "npm",
+    ["run", "plugin:build"],
+    directory,
+    "Agent Plugin build",
   );
 }
 

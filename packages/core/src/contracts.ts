@@ -182,6 +182,63 @@ export interface CodeModeRunRequest {
   readonly onProgress?: (event: CodeModeProgress) => void;
 }
 
+/**
+ * Bounded host-side lifecycle metadata. Events intentionally exclude authored
+ * code, tool inputs, tool results, logs, and diagnostic messages.
+ */
+export type CodeModeObservation =
+  | {
+      readonly type: "execution_started";
+      readonly timestampMs: number;
+      readonly executionId: string;
+      readonly sourceBytes: number;
+    }
+  | {
+      readonly type: "execution_completed";
+      readonly timestampMs: number;
+      readonly executionId: string;
+      readonly ok: boolean;
+      readonly durationMs: number;
+      readonly logEntries: number;
+      readonly errorCode?: SdkErrorCode;
+      readonly phase?: DiagnosticPhase;
+    }
+  | {
+      readonly type: "tool_call_queued";
+      readonly timestampMs: number;
+      readonly executionId: string;
+      readonly callId: string;
+      readonly source: string;
+      readonly tool: string;
+      readonly inputBytes: number;
+    }
+  | {
+      readonly type: "tool_call_started";
+      readonly timestampMs: number;
+      readonly executionId: string;
+      readonly callId: string;
+      readonly source: string;
+      readonly tool: string;
+      readonly queuedDurationMs: number;
+    }
+  | {
+      readonly type: "tool_call_completed";
+      readonly timestampMs: number;
+      readonly executionId: string;
+      readonly callId: string;
+      readonly source: string;
+      readonly tool: string;
+      readonly ok: boolean;
+      readonly durationMs: number;
+      readonly resultBytes?: number;
+      readonly errorCode?: SdkErrorCode;
+      readonly phase?: DiagnosticPhase;
+    };
+
+export type CodeModeObserver = (
+  event: CodeModeObservation,
+) => void | Promise<void>;
+
 export interface CodeModeProgress {
   readonly sequence: number;
   readonly phase:

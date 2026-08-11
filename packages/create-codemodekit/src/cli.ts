@@ -7,8 +7,13 @@ interface CliOptions {
   readonly mcpName: string;
   readonly mcpCommand: string;
   readonly serverName?: string;
+  readonly pluginName?: string;
+  readonly skillName?: string;
+  readonly pluginDescription?: string;
+  readonly pluginLicense?: string;
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin: boolean;
+  readonly authoringSkill: boolean;
   readonly sync: boolean;
   readonly install: boolean;
   readonly codemodekitVersion?: string;
@@ -30,6 +35,7 @@ export async function runCli(args: readonly string[]): Promise<void> {
       ? {}
       : { serverName: options.serverName }),
     policy: options.policy,
+    authoringSkill: options.authoringSkill,
     install: options.install,
     ...(options.codemodekitVersion === undefined
       ? {}
@@ -38,21 +44,39 @@ export async function runCli(args: readonly string[]): Promise<void> {
       ? {}
       : { createCodemodekitVersion: options.createCodemodekitVersion }),
     ...(options.agentPlugin
-      ? { agentPlugin: { sync: options.sync && options.install } }
+      ? {
+          agentPlugin: {
+            sync: options.sync && options.install,
+            ...(options.pluginName === undefined
+              ? {}
+              : { pluginName: options.pluginName }),
+            ...(options.skillName === undefined
+              ? {}
+              : { skillName: options.skillName }),
+            ...(options.pluginDescription === undefined
+              ? {}
+              : { description: options.pluginDescription }),
+            ...(options.pluginLicense === undefined
+              ? {}
+              : { license: options.pluginLicense }),
+          },
+        }
       : {}),
   });
 
   const pluginSummary =
     result.agentPlugin === undefined
       ? ""
-      : result.agentPlugin.synced
-        ? `Agent Plugin: ready (${result.agentPlugin.skillName})\n`
-        : `Agent Plugin: scaffolded (${result.agentPlugin.skillName})\n` +
-          `${result.agentPlugin.syncError === undefined ? "" : `Catalog sync pending: ${result.agentPlugin.syncError}\n`}` +
-          "  npm run plugin:sync\n";
+      : `Agent Plugin: ${result.agentPlugin.built ? "built" : "scaffolded"} (${result.agentPlugin.skillName})\n` +
+        `${result.agentPlugin.synced ? "Catalog: synchronized\n" : "Catalog: pending\n"}` +
+        `${result.agentPlugin.syncError === undefined ? "" : `Catalog sync pending: ${result.agentPlugin.syncError}\n`}` +
+        `${result.agentPlugin.synced ? "" : "  npm run plugin:sync\n"}` +
+        `${result.agentPlugin.built ? "" : "  npm run plugin:build\n"}` +
+        "  npm run plugin:install:cursor\n";
   process.stdout.write(
     `\nCreated ${options.serverName ?? `${options.mcpName}-code-mode`} in ${result.directory}\n\n` +
       `${result.installed ? "" : "  npm install\n"}  npm start\n\n` +
+      `${result.authoringSkillDirectory === undefined ? "" : "Authoring skill: .agents/skills/build-codemodekit-plugin\n"}` +
       pluginSummary +
       `Tool policy: ${options.policy}\n`,
   );
@@ -63,8 +87,13 @@ function parseOptions(args: readonly string[]): CliOptions {
   let mcpName: string | undefined;
   let mcpCommand: string | undefined;
   let serverName: string | undefined;
+  let pluginName: string | undefined;
+  let skillName: string | undefined;
+  let pluginDescription: string | undefined;
+  let pluginLicense: string | undefined;
   let policy: "allow-all" | "deny-all" = "allow-all";
   let agentPlugin = false;
+  let authoringSkill = true;
   let sync = true;
   let install = true;
   let codemodekitVersion: string | undefined;
@@ -89,6 +118,10 @@ function parseOptions(args: readonly string[]): CliOptions {
       agentPlugin = true;
       continue;
     }
+    if (argument === "--no-authoring-skill") {
+      authoringSkill = false;
+      continue;
+    }
     if (argument === "--no-sync") {
       sync = false;
       continue;
@@ -109,6 +142,18 @@ function parseOptions(args: readonly string[]): CliOptions {
         break;
       case "--server-name":
         serverName = value;
+        break;
+      case "--plugin-name":
+        pluginName = value;
+        break;
+      case "--skill-name":
+        skillName = value;
+        break;
+      case "--plugin-description":
+        pluginDescription = value;
+        break;
+      case "--plugin-license":
+        pluginLicense = value;
         break;
       case "--policy":
         if (value !== "allow-all" && value !== "deny-all") {
@@ -136,14 +181,27 @@ function parseOptions(args: readonly string[]): CliOptions {
   if (mcpCommand === undefined) {
     throw new TypeError("--mcp-command is required");
   }
+  if (
+    !agentPlugin &&
+    [pluginName, skillName, pluginDescription, pluginLicense].some(
+      (value) => value !== undefined,
+    )
+  ) {
+    throw new TypeError("Plugin metadata options require --agent-plugin");
+  }
 
   return {
     targetDirectory,
     mcpName,
     mcpCommand,
     ...(serverName === undefined ? {} : { serverName }),
+    ...(pluginName === undefined ? {} : { pluginName }),
+    ...(skillName === undefined ? {} : { skillName }),
+    ...(pluginDescription === undefined ? {} : { pluginDescription }),
+    ...(pluginLicense === undefined ? {} : { pluginLicense }),
     policy,
     agentPlugin,
+    authoringSkill,
     sync,
     install,
     ...(codemodekitVersion === undefined ? {} : { codemodekitVersion }),
@@ -166,6 +224,11 @@ Options:
   --policy allow-all         Allow every discovered upstream tool (default)
   --policy deny-all          Deny every upstream tool until policy is edited
   --agent-plugin             Add plugin.json, mcp.json, and a companion Agent Skill
+  --plugin-name <name>       Override the portable plugin name
+  --skill-name <name>        Override the runtime companion skill name
+  --plugin-description <s>   Override the plugin manifest description
+  --plugin-license <SPDX>    Add a license identifier to plugin.json
+  --no-authoring-skill       Omit the project-local CodeModeKit authoring skill
   --no-sync                  Do not snapshot tool types during Agent Plugin creation
   --no-install               Generate files without running npm install
   --codemodekit-version <v>  Override the generated runtime dependency

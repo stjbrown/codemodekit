@@ -1,6 +1,6 @@
 {
   "name": "codemodekit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Build safe, programmable Code Mode servers from MCP tools.",
   "author": "Stephen Brown",
   "license": "Apache-2.0",

@@ -6,6 +6,7 @@ import {
   createCodeModeMcp,
   mcp,
   serveCodeModeHttp,
+  type CodeModeObservation,
 } from "codemodekit";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, type McpServer } from "@modelcontextprotocol/server";
@@ -30,6 +31,7 @@ afterEach(async () => {
 
 describe("codemodekit", () => {
   it("provides a TypeScript + QuickJS Code Mode MCP from the beginner API", async () => {
+    const observations: CodeModeObservation[] = [];
     const application = createCodeModeMcp({
       name: "facade-test",
       version: "1.0.0",
@@ -41,6 +43,9 @@ describe("codemodekit", () => {
           args: [fixturePath],
         }),
       ],
+      observer: (event) => {
+        observations.push(event);
+      },
     });
     applications.push(application);
 
@@ -82,6 +87,14 @@ describe("codemodekit", () => {
         value: { value: "simple", server: "stdio" },
       },
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observations.map((event) => event.type)).toEqual([
+      "execution_started",
+      "tool_call_queued",
+      "tool_call_started",
+      "tool_call_completed",
+      "execution_completed",
+    ]);
   }, 20_000);
 
   it("constructs stdio sources without requiring transport boilerplate", () => {

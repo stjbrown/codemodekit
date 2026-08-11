@@ -1,5 +1,9 @@
 export { parseMcpCommand, type ParsedCommand } from "./command.js";
 export {
+  installProjectAuthoringSkill,
+  type InstallProjectAuthoringSkillOptions,
+} from "./authoring-skill.js";
+export {
   normalizePortableName,
   renderCompanionSkill,
   scaffoldAgentPlugin,
@@ -21,3 +25,17 @@ export {
   type ScaffoldCodeModeMcpOptions,
   type ScaffoldResult,
 } from "./scaffold.js";
+export {
+  buildAgentPlugin,
+  type BuildAgentPluginOptions,
+  type BuildAgentPluginResult,
+} from "./plugin-build.js";
+export {
+  getCursorPluginStatus,
+  installCursorPlugin,
+  uninstallCursorPlugin,
+  type CursorPluginInstallation,
+  type CursorPluginStatus,
+  type CursorPluginStatusOptions,
+  type InstallCursorPluginOptions,
+} from "./cursor-plugin.js";
