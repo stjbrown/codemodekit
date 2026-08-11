@@ -344,20 +344,22 @@ This is an explicit multi-projection model: an application capability may be exp
 
 The design must not emit every tool declaration into model instructions. Large catalogs make that approach expensive and eventually unusable.
 
-An Agent Plugin contains the Code Mode MCP server and focused skills:
+An Agent Plugin contains the Code Mode MCP server and focused skills. The
+CodeModeKit generator creates a companion runtime skill and snapshots the
+active normalized catalog into its references:
 
 ```text
 plugin.json
 mcp.json
 skills/
-  github/
+  use-github-codemode/
     SKILL.md
     references/
-      api.md
-  slack/
-    SKILL.md
-    references/
-      api.md
+      runtime.md
+      result-contract.md
+      examples.md
+      tools.d.ts
+      catalog-metadata.json
 ```
 
 At startup, the agent sees only:
@@ -384,7 +386,7 @@ Its input supports a required bounded query, an optional exact source filter, `d
 
 Agent Plugins are the canonical packaging and discovery mechanism. `SKILL.md` files and their generated references are the single source of truth.
 
-Agent Plugins are also a supported source of upstream MCP configuration. The consumer installs a plugin and supplies its local root path; the SDK loads `mcp.json` and maps its server entries into managed MCP clients. Plugin discovery, download, installation, and updates are outside the SDK. Skill discovery from the same plugin is reserved for a future iteration, so the plugin boundary must be retained rather than flattening `mcp.json` into anonymous configuration too early.
+Agent Plugins are also a supported source of upstream MCP configuration. The consumer installs a plugin and supplies its local root path; the SDK loads `mcp.json` and maps its server entries into managed MCP clients. Plugin discovery, download, installation, and updates are outside the SDK. CodeModeKit can scaffold a portable plugin and its skill, but it does not itself discover or deliver that skill at runtime; compatible Agent Plugin clients do. The plugin boundary must therefore be retained rather than flattening `mcp.json` into anonymous configuration too early.
 
 ### Future MCP delivery
 

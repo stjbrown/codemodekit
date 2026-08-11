@@ -8,7 +8,11 @@ interface CliOptions {
   readonly mcpCommand: string;
   readonly serverName?: string;
   readonly policy: "allow-all" | "deny-all";
+  readonly agentPlugin: boolean;
+  readonly sync: boolean;
   readonly install: boolean;
+  readonly codemodekitVersion?: string;
+  readonly createCodemodekitVersion?: string;
 }
 
 export async function runCli(args: readonly string[]): Promise<void> {
@@ -27,11 +31,29 @@ export async function runCli(args: readonly string[]): Promise<void> {
       : { serverName: options.serverName }),
     policy: options.policy,
     install: options.install,
+    ...(options.codemodekitVersion === undefined
+      ? {}
+      : { codemodekitVersion: options.codemodekitVersion }),
+    ...(options.createCodemodekitVersion === undefined
+      ? {}
+      : { createCodemodekitVersion: options.createCodemodekitVersion }),
+    ...(options.agentPlugin
+      ? { agentPlugin: { sync: options.sync && options.install } }
+      : {}),
   });
 
+  const pluginSummary =
+    result.agentPlugin === undefined
+      ? ""
+      : result.agentPlugin.synced
+        ? `Agent Plugin: ready (${result.agentPlugin.skillName})\n`
+        : `Agent Plugin: scaffolded (${result.agentPlugin.skillName})\n` +
+          `${result.agentPlugin.syncError === undefined ? "" : `Catalog sync pending: ${result.agentPlugin.syncError}\n`}` +
+          "  npm run plugin:sync\n";
   process.stdout.write(
     `\nCreated ${options.serverName ?? `${options.mcpName}-code-mode`} in ${result.directory}\n\n` +
       `${result.installed ? "" : "  npm install\n"}  npm start\n\n` +
+      pluginSummary +
       `Tool policy: ${options.policy}\n`,
   );
 }
@@ -42,7 +64,11 @@ function parseOptions(args: readonly string[]): CliOptions {
   let mcpCommand: string | undefined;
   let serverName: string | undefined;
   let policy: "allow-all" | "deny-all" = "allow-all";
+  let agentPlugin = false;
+  let sync = true;
   let install = true;
+  let codemodekitVersion: string | undefined;
+  let createCodemodekitVersion: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -57,6 +83,14 @@ function parseOptions(args: readonly string[]): CliOptions {
 
     if (argument === "--no-install") {
       install = false;
+      continue;
+    }
+    if (argument === "--agent-plugin") {
+      agentPlugin = true;
+      continue;
+    }
+    if (argument === "--no-sync") {
+      sync = false;
       continue;
     }
 
@@ -82,6 +116,12 @@ function parseOptions(args: readonly string[]): CliOptions {
         }
         policy = value;
         break;
+      case "--codemodekit-version":
+        codemodekitVersion = value;
+        break;
+      case "--create-codemodekit-version":
+        createCodemodekitVersion = value;
+        break;
       default:
         throw new TypeError(`Unknown option: ${argument}`);
     }
@@ -103,7 +143,13 @@ function parseOptions(args: readonly string[]): CliOptions {
     mcpCommand,
     ...(serverName === undefined ? {} : { serverName }),
     policy,
+    agentPlugin,
+    sync,
     install,
+    ...(codemodekitVersion === undefined ? {} : { codemodekitVersion }),
+    ...(createCodemodekitVersion === undefined
+      ? {}
+      : { createCodemodekitVersion }),
   };
 }
 
@@ -119,7 +165,12 @@ Options:
   --server-name <name>       Downstream MCP server name
   --policy allow-all         Allow every discovered upstream tool (default)
   --policy deny-all          Deny every upstream tool until policy is edited
+  --agent-plugin             Add plugin.json, mcp.json, and a companion Agent Skill
+  --no-sync                  Do not snapshot tool types during Agent Plugin creation
   --no-install               Generate files without running npm install
+  --codemodekit-version <v>  Override the generated runtime dependency
+  --create-codemodekit-version <v>
+                             Override the generated sync dependency
   -h, --help                 Show this help
 `;
 }

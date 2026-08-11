@@ -1,7 +1,7 @@
 {
   "name": "create-codemodekit",
-  "version": "0.1.0",
-  "description": "Scaffold a runnable CodeModeKit server from an MCP command.",
+  "version": "0.2.0",
+  "description": "Scaffold runnable CodeModeKit servers and portable Agent Plugins from MCP commands.",
   "author": "Stephen Brown",
   "license": "Apache-2.0",
   "repository": {
@@ -30,7 +30,7 @@
     }
   },
   "files": ["dist/*.js", "dist/*.d.ts", "dist/*.map"],
-  "keywords": ["code-mode", "mcp", "model-context-protocol", "scaffold"],
+  "keywords": ["code-mode", "mcp", "model-context-protocol", "agent-plugin", "agent-skill", "scaffold"],
   "publishConfig": {
     "access": "public"
   },

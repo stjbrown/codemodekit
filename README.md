@@ -6,18 +6,23 @@ The repository currently contains the M0 walking skeleton, the M1 upstream MCP v
 
 ## Create a server
 
-Scaffold a runnable Code Mode MCP directly from an upstream MCP command:
+Scaffold a runnable Code Mode MCP and portable Agent Plugin around [GitHub's official MCP server](https://github.com/github/github-mcp-server):
 
 ```sh
-npm create codemodekit@latest zscaler-code-mode -- \
-  --mcp-name zscaler \
-  --mcp-command 'uvx --env-file .env zscaler-mcp'
+export GITHUB_PERSONAL_ACCESS_TOKEN=your_token_here
 
-cd zscaler-code-mode
+npm create codemodekit@latest github-code-mode -- \
+  --mcp-name github \
+  --mcp-command 'docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN -e GITHUB_READ_ONLY=1 ghcr.io/github/github-mcp-server' \
+  --agent-plugin
+
+cd github-code-mode
 npm start
 ```
 
-The generator installs dependencies and creates one source file. It parses the MCP command into an executable and argument array; it never starts a shell. The generated project uses the explicit `allow-all` tool policy for a working starting point. Choose `--policy deny-all` when the server should start closed while you define a narrower policy, and use `--no-install` to generate without running `npm install`.
+The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact companion Agent Skill, and catalog-derived TypeScript references. It attempts the initial reference sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
+
+The MCP command is parsed into an executable and argument array; the generator never starts a shell. The generated project uses the explicit `allow-all` tool policy for a working starting point. In the GitHub example, the upstream server is independently placed in read-only mode. Choose `--policy deny-all` when the CodeModeKit server should start closed while you define a narrower policy, and use `--no-install` to generate without running `npm install`.
 
 The hand-written equivalent is intentionally small:
 
@@ -29,14 +34,19 @@ import {
 } from "codemodekit";
 
 await serveCodeModeStdio({
-  name: "zscaler-code-mode",
+  name: "github-code-mode",
   version: "0.1.0",
   toolPolicy: allowAllToolCalls(),
   sources: [
     mcp.stdio({
-      name: "zscaler",
-      command: "uvx",
-      args: ["--env-file", ".env", "zscaler-mcp"],
+      name: "github",
+      command: "docker",
+      args: [
+        "run", "-i", "--rm",
+        "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e", "GITHUB_READ_ONLY=1",
+        "ghcr.io/github/github-mcp-server",
+      ],
     }),
   ],
 });
@@ -54,10 +64,10 @@ import {
 } from "codemodekit";
 
 const server = await serveCodeModeHttp({
-  name: "zscaler-code-mode",
+  name: "my-code-mode",
   version: "0.1.0",
   toolPolicy: allowAllToolCalls(),
-  sources: [mcp.stdio({ name: "zscaler", command: "zscaler-mcp" })],
+  sources: [mcp.stdio({ name: "upstream", command: "my-mcp-server" })],
   port: 3000,
 });
 
@@ -73,6 +83,7 @@ HTTP binds to `127.0.0.1` at `/mcp` by default. A non-loopback bind must explici
 - `@codemodekit/sandbox-quickjs`: isolated QuickJS/WASM implementation with a pruned global surface and asynchronous host bridge.
 - `codemodekit`: batteries-included Code Mode construction plus stdio and Streamable HTTP hosts.
 - `create-codemodekit`: command-driven one-file project scaffolder.
+- `skills/build-codemodekit-plugin`: installable authoring guidance for creating and maintaining portable CodeModeKit Agent Plugins.
 - `tests/support/InMemoryTestToolProvider`: private deterministic provider fixture. It is not a supported local-tool provider.
 
 ## Development
@@ -221,13 +232,14 @@ The loader reads only local root `plugin.json` and `mcp.json` files. It does not
 - A compiled Agent Plugin-to-stdio server example proven through a process-level MCP client integration test.
 - A shared provider-conformance suite run against both real MCP stdio and the private provider-neutral fixture.
 - Agent Plugins 1.0.0 `plugin.json` and `mcp.json` loading with contained paths, `PLUGIN_ROOT`/`PLUGIN_DATA`, literal remote headers, and per-entry isolation.
+- Agent Plugins 1.0 scaffolding with a companion Agent Skill and revisioned catalog-derived TypeScript references.
 - MCP Apps model-visibility filtering: app-only tools are not exposed to authored code.
 - Actionable, catchable upstream MCP tool errors and cancellation propagation.
 - Actionable compile and sandbox diagnostics returned as values.
 
 ## Not implemented yet
 
-- Agent Plugin skill discovery and delivery.
+- Agent Plugin skill discovery and delivery by CodeModeKit itself. Generated plugins already package skills for compatible clients.
 - Complete v0.1 progress, health, diagnostic, and conformance surfaces.
 - Public local-function and OpenAPI providers; these remain v2 work.
 
