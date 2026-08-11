@@ -1,0 +1,36 @@
+{
+  "name": "create-codemodekit",
+  "version": "0.1.0",
+  "description": "Scaffold a runnable CodeModeKit server from an MCP command.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stjbrown/codemodekit.git",
+    "directory": "packages/create-codemodekit"
+  },
+  "homepage": "https://github.com/stjbrown/codemodekit#readme",
+  "bugs": {
+    "url": "https://github.com/stjbrown/codemodekit/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "create-codemodekit": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist/*.js", "dist/*.d.ts", "dist/*.map"],
+  "keywords": ["code-mode", "mcp", "model-context-protocol", "scaffold"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {}
+}

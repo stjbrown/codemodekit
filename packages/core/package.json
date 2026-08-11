@@ -1,0 +1,35 @@
+{
+  "name": "@codemodekit/core",
+  "version": "0.1.0",
+  "description": "Core orchestration, policy, catalogs, and TypeScript compilation for CodeModeKit.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stjbrown/codemodekit.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/stjbrown/codemodekit#readme",
+  "bugs": {
+    "url": "https://github.com/stjbrown/codemodekit/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist/*.js", "dist/*.d.ts", "dist/*.map"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "typescript": "5.9.3"
+  }
+}

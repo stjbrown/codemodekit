@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+import { parseMcpCommand } from "./command.js";
+import { scaffoldCodeModeMcp } from "./scaffold.js";
+
+interface CliOptions {
+  readonly targetDirectory: string;
+  readonly mcpName: string;
+  readonly mcpCommand: string;
+  readonly serverName?: string;
+  readonly policy: "allow-all" | "deny-all";
+  readonly install: boolean;
+}
+
+export async function runCli(args: readonly string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(usage());
+    return;
+  }
+
+  const options = parseOptions(args);
+  const result = await scaffoldCodeModeMcp({
+    targetDirectory: options.targetDirectory,
+    mcpName: options.mcpName,
+    mcpCommand: parseMcpCommand(options.mcpCommand),
+    ...(options.serverName === undefined
+      ? {}
+      : { serverName: options.serverName }),
+    policy: options.policy,
+    install: options.install,
+  });
+
+  process.stdout.write(
+    `\nCreated ${options.serverName ?? `${options.mcpName}-code-mode`} in ${result.directory}\n\n` +
+      `${result.installed ? "" : "  npm install\n"}  npm start\n\n` +
+      `Tool policy: ${options.policy}\n`,
+  );
+}
+
+function parseOptions(args: readonly string[]): CliOptions {
+  let targetDirectory: string | undefined;
+  let mcpName: string | undefined;
+  let mcpCommand: string | undefined;
+  let serverName: string | undefined;
+  let policy: "allow-all" | "deny-all" = "allow-all";
+  let install = true;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === undefined) continue;
+    if (!argument.startsWith("-")) {
+      if (targetDirectory !== undefined) {
+        throw new TypeError(`Unexpected argument: ${argument}`);
+      }
+      targetDirectory = argument;
+      continue;
+    }
+
+    if (argument === "--no-install") {
+      install = false;
+      continue;
+    }
+
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new TypeError(`Missing value for ${argument}`);
+    }
+    index += 1;
+
+    switch (argument) {
+      case "--mcp-name":
+        mcpName = value;
+        break;
+      case "--mcp-command":
+        mcpCommand = value;
+        break;
+      case "--server-name":
+        serverName = value;
+        break;
+      case "--policy":
+        if (value !== "allow-all" && value !== "deny-all") {
+          throw new TypeError("--policy must be allow-all or deny-all");
+        }
+        policy = value;
+        break;
+      default:
+        throw new TypeError(`Unknown option: ${argument}`);
+    }
+  }
+
+  if (targetDirectory === undefined) {
+    throw new TypeError("A target directory is required");
+  }
+  if (mcpName === undefined) {
+    throw new TypeError("--mcp-name is required");
+  }
+  if (mcpCommand === undefined) {
+    throw new TypeError("--mcp-command is required");
+  }
+
+  return {
+    targetDirectory,
+    mcpName,
+    mcpCommand,
+    ...(serverName === undefined ? {} : { serverName }),
+    policy,
+    install,
+  };
+}
+
+function usage(): string {
+  return `Create a batteries-included Code Mode MCP server.
+
+Usage:
+  npm create codemodekit@latest <directory> -- \\
+    --mcp-name <name> \\
+    --mcp-command '<executable> [args...]'
+
+Options:
+  --server-name <name>       Downstream MCP server name
+  --policy allow-all         Allow every discovered upstream tool (default)
+  --policy deny-all          Deny every upstream tool until policy is edited
+  --no-install               Generate files without running npm install
+  -h, --help                 Show this help
+`;
+}
+
+runCli(process.argv.slice(2)).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`create-codemodekit: ${message}\n\n${usage()}`);
+  process.exitCode = 1;
+});

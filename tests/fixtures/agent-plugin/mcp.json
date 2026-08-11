@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "plugin-primary": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/server.mjs"],
+      "env": {
+        "EXPECTED_PLUGIN_ROOT": "${PLUGIN_ROOT}",
+        "EXPECTED_PLUGIN_DATA": "${PLUGIN_DATA}"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    },
+    "deployment-api": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/server.mjs"],
+      "cwd": "./"
+    },
+    "invalid-escape": {
+      "type": "stdio",
+      "command": "../outside-plugin"
+    }
+  }
+}

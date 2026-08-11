@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/examples.tsbuildinfo"
+  },
+  "references": [
+    { "path": "../packages/core" },
+    { "path": "../packages/mcp" },
+    { "path": "../packages/sandbox-quickjs" }
+  ],
+  "include": ["*.ts"]
+}
