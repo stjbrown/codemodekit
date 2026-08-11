@@ -3,6 +3,7 @@ name: Publish npm packages
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,9 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
       - uses: pnpm/setup@v1
         with:
-          runtime: node@24
           cache: false
           install: false
       - name: Use an OIDC-capable npm CLI
