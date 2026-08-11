@@ -2,6 +2,8 @@
   "name": "@codemodekit/core",
   "version": "0.1.0",
   "description": "Core orchestration, policy, catalogs, and TypeScript compilation for CodeModeKit.",
+  "author": "Stephen Brown",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/stjbrown/codemodekit.git",

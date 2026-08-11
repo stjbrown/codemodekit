@@ -2,6 +2,8 @@
   "name": "codemodekit-workspace",
   "version": "0.0.0",
   "private": true,
+  "author": "Stephen Brown",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.13.1",
   "repository": {

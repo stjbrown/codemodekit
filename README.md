@@ -232,3 +232,7 @@ The loader reads only local root `plugin.json` and `mcp.json` files. It does not
 - Public local-function and OpenAPI providers; these remain v2 work.
 
 See [the v0.1 plan](docs/plan/v0.1.md) and [architecture](docs/architecture/code-mode.md) for the accepted design.
+
+## License
+
+CodeModeKit is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Stephen Brown.

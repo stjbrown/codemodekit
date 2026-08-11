@@ -2,6 +2,8 @@
   "name": "@codemodekit/mcp",
   "version": "0.1.0",
   "description": "MCP providers, transports, and downstream adapters for CodeModeKit.",
+  "author": "Stephen Brown",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/stjbrown/codemodekit.git",
