@@ -8,7 +8,7 @@ Inspect:
 
 - product README and examples;
 - `src/server.mjs` source names, Local Tool implementations, annotations, and policy;
-- generated `tools.d.ts` and catalog metadata;
+- generated declaration shards indexed by `catalog-metadata.json`;
 - tests and evaluation prompts;
 - existing skill instructions and references;
 - plugin name, description, keywords, version, and license; and

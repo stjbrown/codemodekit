@@ -10,6 +10,10 @@ export type ScaffoldSource =
       readonly type: "mcp-http";
       readonly name: string;
       readonly url: string;
+      /** Reads an Authorization bearer token from this host environment variable. */
+      readonly bearerTokenEnv?: string;
+      /** Maps HTTP header names to host environment variable names. */
+      readonly headerEnv?: Readonly<Record<string, string>>;
     }
   | {
       readonly type: "weather";
@@ -19,6 +23,29 @@ export interface RenderedSource {
   readonly imports: readonly string[];
   readonly prelude: string;
   readonly expression: string;
+}
+
+export interface RenderedSources {
+  readonly imports: readonly string[];
+  readonly prelude: string;
+  readonly expressions: readonly string[];
+}
+
+export function renderSources(sources: readonly ScaffoldSource[]): RenderedSources {
+  const rendered = sources.map(renderSource);
+  const needsEnvironment = sources.some(
+    (source) =>
+      source.type === "mcp-http" &&
+      (source.bearerTokenEnv !== undefined ||
+        Object.keys(source.headerEnv ?? {}).length > 0),
+  );
+  return {
+    imports: [...new Set(rendered.flatMap((source) => source.imports))],
+    prelude:
+      (needsEnvironment ? renderEnvironmentHelper() : "") +
+      rendered.map((source) => source.prelude).join(""),
+    expressions: rendered.map((source) => source.expression),
+  };
 }
 
 export function renderSource(source: ScaffoldSource): RenderedSource {
@@ -35,7 +62,20 @@ export function renderSource(source: ScaffoldSource): RenderedSource {
     }),
   `,
       };
-    case "mcp-http":
+    case "mcp-http": {
+      const headers = [
+        ...(source.bearerTokenEnv === undefined
+          ? []
+          : [
+              `        authorization: "Bearer " + requiredEnvironment(${JSON.stringify(source.bearerTokenEnv)}),`,
+            ]),
+        ...Object.entries(source.headerEnv ?? {})
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(
+            ([header, environment]) =>
+              `        ${JSON.stringify(header)}: requiredEnvironment(${JSON.stringify(environment)}),`,
+          ),
+      ];
       return {
         imports: ["mcp"],
         prelude: "",
@@ -43,9 +83,11 @@ export function renderSource(source: ScaffoldSource): RenderedSource {
     mcp.http({
       name: ${JSON.stringify(source.name)},
       url: ${JSON.stringify(source.url)},
+${headers.length === 0 ? "" : `      headers: {\n${headers.join("\n")}\n      },\n`}
     }),
   `,
       };
+    }
     case "weather":
       return {
         imports: ["defineTool", "local", "ToolError"],
@@ -60,7 +102,17 @@ export function renderSource(source: ScaffoldSource): RenderedSource {
   }
 }
 
-export function renderSourceReadme(source: ScaffoldSource): string {
+export function renderSourcesReadme(sources: readonly ScaffoldSource[]): string {
+  if (sources.length === 1) return renderSourceReadme(sources[0] as ScaffoldSource);
+  return `It combines ${String(sources.length)} sources in one catalog:\n\n${sources
+    .map(
+      (source) =>
+        `### \`${sourceName(source)}\`\n\n${renderSourceReadme(source)}`,
+    )
+    .join("\n\n")}`;
+}
+
+function renderSourceReadme(source: ScaffoldSource): string {
   switch (source.type) {
     case "mcp-stdio":
       return `It wraps the \`${source.name}\` MCP source using this shell-free process configuration:
@@ -68,8 +120,16 @@ export function renderSourceReadme(source: ScaffoldSource): string {
 \`\`\`json
 ${JSON.stringify(source.command, null, 2)}
 \`\`\``;
-    case "mcp-http":
-      return `It wraps the \`${source.name}\` Streamable HTTP MCP source at \`${source.url}\`.`;
+    case "mcp-http": {
+      const environment = sourceEnvironmentVariables(source);
+      const authentication =
+        environment.length === 0
+          ? ""
+          : ` Authentication headers are assembled at runtime from ${environment
+              .map((name) => `\`${name}\``)
+              .join(", ")}; their values are not written to source or plugin artifacts.`;
+      return `It wraps the \`${source.name}\` Streamable HTTP MCP source at \`${source.url}\`.${authentication}`;
+    }
     case "weather":
       return `This is the editable, keyless weather starter. It exposes two local tools—\`weather.findLocation\` and \`weather.getCurrentWeather\`—so an agent can compose geocoding and current-weather lookup inside one \`run_typescript\` call.
 
@@ -77,18 +137,52 @@ It uses Open-Meteo's public endpoints by default. The free endpoint is intended 
   }
 }
 
-export function renderEnvExample(source: ScaffoldSource): string {
-  switch (source.type) {
-    case "weather":
-      return `# Optional Open-Meteo customer or self-hosted endpoints.
+export function renderEnvExample(sources: readonly ScaffoldSource[]): string {
+  const sections = sources.map((source) => {
+    switch (source.type) {
+      case "weather":
+        return `# Optional Open-Meteo customer or self-hosted endpoints.
 # OPEN_METEO_GEOCODING_URL=https://geocoding-api.open-meteo.com/v1/search
 # OPEN_METEO_FORECAST_URL=https://api.open-meteo.com/v1/forecast
 `;
-    case "mcp-http":
-      return "# Add any credentials required by the remote MCP source here.\n";
-    case "mcp-stdio":
-      return "# Add any credentials required by the upstream MCP process here.\n";
+      case "mcp-http": {
+        const variables = sourceEnvironmentVariables(source);
+        return variables.length === 0
+          ? `# ${source.name}: add any environment required by the remote MCP source.\n`
+          : `# ${source.name}: required HTTP authentication environment.\n${variables
+              .map((name) => `${name}=`)
+              .join("\n")}\n`;
+      }
+      case "mcp-stdio":
+        return `# ${source.name}: add any environment required by the upstream MCP process.\n`;
+    }
+  });
+  return sections.join("\n");
+}
+
+function sourceEnvironmentVariables(
+  source: Extract<ScaffoldSource, { readonly type: "mcp-http" }>,
+): readonly string[] {
+  return [
+    ...(source.bearerTokenEnv === undefined ? [] : [source.bearerTokenEnv]),
+    ...Object.values(source.headerEnv ?? {}),
+  ].filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function sourceName(source: ScaffoldSource): string {
+  return source.type === "weather" ? "weather" : source.name;
+}
+
+function renderEnvironmentHelper(): string {
+  return `function requiredEnvironment(name) {
+  const value = process.env[name];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("Missing required environment variable: " + name);
   }
+  return value;
+}
+
+`;
 }
 
 function renderWeatherPrelude(): string {

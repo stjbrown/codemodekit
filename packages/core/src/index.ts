@@ -40,6 +40,8 @@ export type {
   ToolPolicyRequest,
   ToolProvider,
   TypeScriptCatalog,
+  TypeScriptCatalogShard,
+  TypeScriptCatalogSource,
 } from "./contracts.js";
 export { CodeModeError, ProviderToolError } from "./errors.js";
 export type { JsonObject, JsonPrimitive, JsonSchema, JsonValue } from "./json.js";

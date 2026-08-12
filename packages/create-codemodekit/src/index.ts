@@ -19,6 +19,8 @@ export {
   type AgentPluginSourceReport,
   type AgentPluginStartupReport,
   type AgentPluginTypeScriptCatalog,
+  type AgentPluginTypeScriptCatalogShard,
+  type AgentPluginTypeScriptCatalogSource,
   type ScaffoldAgentPluginOptions,
   type ScaffoldAgentPluginResult,
   type SyncAgentPluginSkillOptions,

@@ -4,6 +4,16 @@ Verify from the downstream MCP boundary because direct provider calls bypass com
 
 ## Minimum smoke
 
+Start with the generated harness:
+
+```sh
+npm run verify
+```
+
+To exercise real providers, write one bounded TypeScript composition that returns an object containing `verified: true`, export any documented source environment, and run `CODEMODEKIT_VERIFY_CODE_FILE=verify/live.ts npm run verify`.
+
+For custom or retrofitted projects, verify the same semantics manually:
+
 1. Start the generated server over stdio.
 2. List tools and assert `run_typescript` is present. Expect `search_tools` unless disabled intentionally.
 3. Call `search_tools` with a narrow capability query and inspect its generated TypeScript call shape.
@@ -18,6 +28,7 @@ Verify from the downstream MCP boundary because direct provider calls bypass com
 6. Send one schema-invalid input and assert the provider is not invoked.
 7. Exercise one denied call when a custom or deny-all policy is used.
 8. Confirm errors contain bounded safe diagnostics rather than credentials, stack traces, or raw upstream payloads.
+9. Exercise a multi-row result and assert the authored code projects fields and caps or summarizes the returned collection.
 
 ## Agent Plugin
 

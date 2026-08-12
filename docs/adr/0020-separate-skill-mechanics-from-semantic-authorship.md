@@ -20,7 +20,7 @@ The open skills CLI is the primary human-facing installation path: `npx skills a
 
 Ownership is explicit:
 
-- CodeModeKit owns `references/tools.d.ts`, `references/catalog-metadata.json`, manifest scaffolding, catalog synchronization, and `dist/plugin` construction.
+- CodeModeKit owns the complete `references/tools.d.ts`, generated per-source and tool-prefix declaration shards, `references/catalog-metadata.json`, manifest scaffolding, catalog synchronization, and `dist/plugin` construction.
 - The coding agent and developer own the runtime `SKILL.md`, domain workflows, safety guidance, and worked examples.
 - Catalog synchronization updates only generated catalog files and never overwrites semantic authorship.
 

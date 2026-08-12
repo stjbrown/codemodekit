@@ -47,6 +47,7 @@ describe("generated Agent Plugin conformance", () => {
     const skillName = "use-fixture-codemode";
     const skillDirectory = path.join(root, "skills", skillName);
     await expectSkillConforms(skillDirectory, skillName, [
+      "references/catalog-metadata.json",
       "references/tools.d.ts",
       "references/runtime.md",
       "references/result-contract.md",

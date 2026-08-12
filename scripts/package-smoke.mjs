@@ -18,6 +18,12 @@ const fixturePath = path.join(
   "fixtures",
   "mcp-stdio-server.mjs",
 );
+const largeFixturePath = path.join(
+  workspaceRoot,
+  "tests",
+  "fixtures",
+  "mcp-large-server.mjs",
+);
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const packages = [
   ["@codemodekit/core", "core"],
@@ -101,6 +107,7 @@ try {
 
   const project = path.join(temporaryRoot, "generated-plugin");
   const upstreamCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(fixturePath)}`;
+  const largeUpstreamCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(largeFixturePath)}`;
   await run(
     process.execPath,
     [
@@ -110,6 +117,10 @@ try {
       "fixture",
       "--mcp-command",
       upstreamCommand,
+      "--mcp-name",
+      "enterprise",
+      "--mcp-command",
+      largeUpstreamCommand,
       "--server-name",
       "package-smoke",
       "--agent-plugin",
@@ -142,7 +153,51 @@ try {
     ["install", "--prefer-offline", "--config.confirmModulesPurge=false"],
     project,
   );
+  const liveVerifier = path.join(project, "verify-live.ts");
+  await writeFile(
+    liveVerifier,
+    `const echo = await tools.fixture.echo({ value: "verify-packed" });
+const large = await tools.enterprise.zia_url_filtering_list_rule_000({ value: "verify-large" });
+return {
+  verified:
+    echo.structuredContent.value === "verify-packed" &&
+    large.structuredContent.value === "verify-large",
+};
+`,
+    "utf8",
+  );
+  await run(pnpm, ["run", "verify"], project, {
+    CODEMODEKIT_VERIFY_CODE_FILE: liveVerifier,
+  });
   await run(pnpm, ["run", "plugin:sync"], project);
+  const catalogMetadata = JSON.parse(
+    await readFile(
+      path.join(
+        project,
+        "skills",
+        "use-multi-source-codemode",
+        "references",
+        "catalog-metadata.json",
+      ),
+      "utf8",
+    ),
+  );
+  const enterpriseShards = catalogMetadata.declarations.filter(
+    (declaration) =>
+      declaration.scope === "prefix" && declaration.source === "enterprise",
+  );
+  if (
+    enterpriseShards.length < 7 ||
+    enterpriseShards.some((declaration) => declaration.toolCount > 50) ||
+    enterpriseShards.reduce(
+      (total, declaration) => total + declaration.toolCount,
+      0,
+    ) !== 306
+  ) {
+    throw new Error(
+      `Unexpected 306-tool catalog shards: ${JSON.stringify(enterpriseShards)}`,
+    );
+  }
   await run(pnpm, ["run", "plugin:build"], project);
 
   const artifact = path.join(project, "dist", "plugin");
@@ -178,14 +233,19 @@ try {
     name: "run_typescript",
     arguments: {
       code: `
-        const result = await tools.fixture.echo({ value: "packed" });
-        return result.structuredContent.value;
+        const echo = await tools.fixture.echo({ value: "packed" });
+        const large = await tools.enterprise.zpa_application_list_065({ value: "large-packed" });
+        return {
+          echo: echo.structuredContent.value,
+          large: large.structuredContent.value,
+        };
       `,
     },
   });
   if (
     execution.structuredContent?.ok !== true ||
-    execution.structuredContent?.value !== "packed"
+    execution.structuredContent?.value?.echo !== "packed" ||
+    execution.structuredContent?.value?.large !== "large-packed"
   ) {
     throw new Error(
       `Unexpected packed plugin result: ${JSON.stringify(execution.structuredContent)}`,
@@ -300,7 +360,7 @@ try {
   }
 
   process.stdout.write(
-    "Package smoke passed: six tarballs ran portable MCP and Local Tool plugins.\n",
+    "Package smoke passed: six tarballs ran portable MCP, 306-tool sharding, generated verification, and Local Tool plugins.\n",
   );
 } finally {
   await client?.close().catch(() => undefined);
@@ -323,6 +383,7 @@ async function configurePackedProject(project, tarballs, createTarball) {
   packageJson.devDependencies = {
     "create-codemodekit": `file:${createTarball}`,
     "@codemodekit/skills": `file:${requiredTarball(tarballs, "@codemodekit/skills")}`,
+    "@modelcontextprotocol/client": "2.0.0-beta.5",
   };
   await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
   await writeFile(
@@ -461,10 +522,11 @@ async function expectMissing(file) {
   throw new Error(`Unexpected path in portable artifact: ${file}`);
 }
 
-async function run(command, args, cwd) {
+async function run(command, args, cwd, environment = {}) {
   try {
     return await execFileAsync(command, args, {
       cwd,
+      env: { ...process.env, ...environment },
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
       timeout: 120_000,

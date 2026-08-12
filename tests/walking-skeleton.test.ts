@@ -170,6 +170,61 @@ describe("M0 walking skeleton", () => {
     });
   });
 
+  it("disposes timed-out debug runtimes while provider work is still settling", async () => {
+    let observedAborts = 0;
+    for (let iteration = 0; iteration < 8; iteration += 1) {
+      const slowTool: InMemoryTool = {
+        name: "slow",
+        inputSchema: { type: "object", additionalProperties: false },
+        execute: async ({ signal }) => {
+          await new Promise<void>((resolve) => {
+            const finish = (): void => {
+              setTimeout(resolve, 10);
+            };
+            if (signal.aborted) {
+              observedAborts += 1;
+              finish();
+            } else {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  observedAborts += 1;
+                  finish();
+                },
+                { once: true },
+              );
+            }
+          });
+          return { content: [], structuredContent: { late: true } };
+        },
+      };
+      const provider = new InMemoryTestToolProvider({
+        sourceName: "test",
+        tools: [slowTool],
+      });
+      const codeMode = new CodeMode({
+        compiler: new TypeScriptCompiler(),
+        sandbox: new QuickJsSandbox({ debug: true }),
+        toolPolicy: allowAllToolCalls(),
+        providers: [provider],
+        limits: { wallTimeMs: 2_000, toolCallTimeMs: 5 },
+      });
+      instances.push(codeMode);
+
+      const result = await codeMode.run({
+        code: "return await tools.test.slow({});",
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostic: { code: "TOOL_TIMEOUT" },
+      });
+      await codeMode.close();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(observedAborts).toBe(8);
+  });
+
   it("requires an explicit return and does not return the final expression", async () => {
     const codeMode = createCodeMode(fixtureProvider());
     const result = await codeMode.run({
@@ -648,6 +703,40 @@ describe("M0 walking skeleton", () => {
       value: { structuredContent: { value: "repaired" } },
     });
     expect(provider.calls).toBe(1);
+  });
+
+  it("generates standalone source catalogs and bounded tool-prefix shards", async () => {
+    const names = [
+      ...Array.from({ length: 60 }, (_, index) =>
+        `zia_get_policy_${String(index).padStart(3, "0")}`,
+      ),
+      ...Array.from({ length: 45 }, (_, index) =>
+        `zia_list_policy_${String(index).padStart(3, "0")}`,
+      ),
+      ...Array.from({ length: 35 }, (_, index) =>
+        `zia_update_policy_${String(index).padStart(3, "0")}`,
+      ),
+    ];
+    const provider = new InMemoryTestToolProvider({
+      sourceName: "zscaler",
+      tools: names.map((name) => ({ ...echoTool(), name })),
+    });
+    const codeMode = createCodeMode(provider);
+
+    const catalog = await codeMode.getTypeScriptCatalog();
+    expect(catalog.sources).toHaveLength(1);
+    const source = catalog.sources[0];
+    expect(source).toMatchObject({ source: "zscaler", toolCount: 140 });
+    expect(source?.declarations).toContain("readonly zscaler:");
+    expect(source?.shards.map((shard) => shard.key)).toEqual([
+      "zia-get-policy-part-01",
+      "zia-get-policy-part-02",
+      "zia-list",
+      "zia-update",
+    ]);
+    expect(source?.shards.every((shard) => shard.toolCount <= 50)).toBe(true);
+    expect(source?.shards[0]?.declarations).toContain("zia_get_policy_000");
+    expect(source?.shards[0]?.declarations).not.toContain("zia_list_policy_000");
   });
 
   it("bounds startup warnings and resolves duplicate definitions by last occurrence", async () => {

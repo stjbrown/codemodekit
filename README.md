@@ -65,16 +65,31 @@ npm create codemodekit@latest github-code-mode -- \
   --agent-plugin
 
 cd github-code-mode
+npm run verify
 npm start
 ```
 
-The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact runtime Agent Skill, catalog-derived TypeScript references, and a self-contained `dist/plugin` artifact. It attempts the initial reference sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
+The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact runtime Agent Skill, and a self-contained `dist/plugin` artifact. Catalog sync generates a complete TypeScript catalog, per-source declarations, and bounded tool-prefix shards so an agent can load only the relevant surface. It attempts the initial sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
 
 Every scaffold also receives two project-level development skills: `.agents/skills/build-codemodekit-server` builds and verifies the server, while `.agents/skills/author-codemode-skill` turns the generated runtime baseline into domain-aware workflows and maintains the Agent Plugin. Use `--no-authoring-skill` to omit both. Development skills are not included in the runtime plugin artifact.
 
 The generator obtains those files from `@codemodekit/skills`, which remains the programmatic and npm-packaged installer. The `npx skills add stjbrown/codemodekit` path above is the preferred way to add or update them in an existing project.
 
 The MCP command is parsed into an executable and argument array; the generator never starts a shell. The generated project uses the explicit `allow-all` tool policy for a working starting point. In the GitHub example, the upstream server is independently placed in read-only mode. Choose `--policy deny-all` when the CodeModeKit server should start closed while you define a narrower policy, and use `--no-install` to generate without running `npm install`.
+
+Every generated project includes `npm run verify`. The default verification checks the two-tool Code Mode surface, every configured source, invalid-call handling, and sandbox isolation without invoking provider tools. Set `CODEMODEKIT_VERIFY_CODE_FILE` to a bounded TypeScript composition that exercises real providers and returns `{ verified: true }` to add a semantic live assertion.
+
+Repeat a complete `--mcp-name` plus `--mcp-command` or `--mcp-url` group to combine several sources in one server. HTTP credentials stay host-side and are read at runtime:
+
+```sh
+npm create codemodekit@latest work-code-mode -- \
+  --mcp-name github --mcp-command 'docker run -i --rm ghcr.io/github/github-mcp-server' \
+  --mcp-name tickets --mcp-url https://tickets.example.com/mcp \
+  --mcp-bearer-env TICKETS_TOKEN \
+  --mcp-header-env X-Workspace=TICKETS_WORKSPACE
+```
+
+The generated `.env.example` lists required variable names but does not load secrets automatically; export them or use your normal environment manager.
 
 ### Build and install the plugin
 

@@ -51,7 +51,7 @@ export function registerCodeModeTools(
     {
       title: "Run TypeScript",
       description:
-        "Execute one bounded TypeScript async-function body against the configured tools catalog. First use search_tools with detail=typescript. Every tools.* call returns a ToolResult wrapper: prefer result.structuredContent, inspect unknown shapes such as structuredContent.result, and only fall back to guarded JSON text from result.content. Use upstream filtering or projection inputs when available. Compose multiple calls and return only final transformed data inside this execution. Imports and host APIs are unavailable. Returns actionable diagnostics for repair.",
+        "Execute one bounded TypeScript async-function body against the configured tools catalog. Use generated declaration references when available; use search_tools with detail=typescript for stale, missing, or unfamiliar capabilities. Every tools.* call returns a ToolResult wrapper: prefer result.structuredContent, inspect unknown shapes such as structuredContent.result, and only fall back to guarded JSON text from result.content. Compose related calls inside this execution, project only requested fields, cap returned collections, and return summaries instead of raw upstream payloads. Imports and host APIs are unavailable. Returns actionable diagnostics for repair.",
       inputSchema: runTypeScriptInput,
       annotations: {
         readOnlyHint: false,

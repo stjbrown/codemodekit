@@ -1,5 +1,17 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import {
+  catalogDeclarationFiles,
+  commitCatalogSnapshot,
+  type AgentPluginTypeScriptCatalog,
+} from "./catalog-files.js";
+
+export type {
+  AgentPluginTypeScriptCatalog,
+  AgentPluginTypeScriptCatalogShard,
+  AgentPluginTypeScriptCatalogSource,
+} from "./catalog-files.js";
 
 const PLUGIN_SCHEMA =
   "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -24,11 +36,6 @@ export interface AgentPluginSourceReport {
   readonly toolCount: number;
   readonly message?: string;
   readonly rejectedToolCount?: number;
-}
-
-export interface AgentPluginTypeScriptCatalog {
-  readonly catalogRevision: string;
-  readonly declarations: string;
 }
 
 export interface ScaffoldAgentPluginOptions {
@@ -62,6 +69,7 @@ export interface SyncAgentPluginSkillResult {
   readonly skillDirectory: string;
   readonly catalogRevision: string;
   readonly declarations: string;
+  readonly declarationFiles: readonly string[];
   readonly metadata: string;
   readonly sources: readonly AgentPluginSourceReport[];
 }
@@ -141,9 +149,13 @@ export async function scaffoldAgentPlugin(
       "utf8",
     ),
     writeJson(path.join(referencesDirectory, "catalog-metadata.json"), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: "pending",
       serverName,
+      declarations: [
+        { path: "tools.d.ts", scope: "catalog", toolCount: 0 },
+      ],
+      generatedFiles: ["tools.d.ts"],
       message: "Run npm run plugin:sync after the upstream tool source is available.",
     }),
   ]);
@@ -184,14 +196,15 @@ export async function syncAgentPluginSkill(
   const skillDirectory = path.join(root, "skills", skillName);
   const referencesDirectory = path.join(skillDirectory, "references");
   await mkdir(referencesDirectory, { recursive: true });
+  const declarationFiles = catalogDeclarationFiles(snapshot.catalog);
   const declarationsPath = path.join(referencesDirectory, "tools.d.ts");
   const metadataPath = path.join(referencesDirectory, "catalog-metadata.json");
-  const declarations = renderCatalogDeclarations(
-    snapshot.catalog.catalogRevision,
-    snapshot.catalog.declarations,
+  const totalToolCount = snapshot.startup.sources.reduce(
+    (total, source) => total + source.toolCount,
+    0,
   );
   const metadata = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: "ready",
     serverName,
     catalogRevision: snapshot.catalog.catalogRevision,
@@ -203,17 +216,32 @@ export async function syncAgentPluginSkill(
         ? {}
         : { rejectedToolCount: source.rejectedToolCount }),
     })),
+    declarations: declarationFiles.map((file) => ({
+      path: file.path,
+      scope: file.scope,
+      toolCount:
+        file.scope === "catalog" ? totalToolCount : file.toolCount,
+      ...(file.source === undefined ? {} : { source: file.source }),
+      ...(file.prefixes === undefined ? {} : { prefixes: file.prefixes }),
+    })),
+    generatedFiles: declarationFiles.map((file) => file.path),
   };
 
-  await Promise.all([
-    atomicWrite(declarationsPath, declarations),
-    atomicWrite(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`),
-  ]);
+  await commitCatalogSnapshot(
+    referencesDirectory,
+    new Map([
+      ...declarationFiles.map((file) => [file.path, file.contents] as const),
+      ["catalog-metadata.json", `${JSON.stringify(metadata, null, 2)}\n`] as const,
+    ]),
+  );
 
   return {
     skillDirectory,
     catalogRevision: snapshot.catalog.catalogRevision,
     declarations: declarationsPath,
+    declarationFiles: declarationFiles.map((file) =>
+      path.join(referencesDirectory, file.path),
+    ),
     metadata: metadataPath,
     sources: snapshot.startup.sources,
   };
@@ -255,10 +283,10 @@ This generated baseline covers Code Mode mechanics and the live tool catalog. Ma
 
 Use \`run_typescript\` as the primary interface to the tools wrapped by this server.
 
-1. Locate the relevant declarations in [references/tools.d.ts](references/tools.d.ts) before authoring calls. Search large files by capability, source, or tool name and read only focused matches.
+1. Read [references/catalog-metadata.json](references/catalog-metadata.json) as the declaration-file index. Open the narrowest listed prefix or source shard that covers the request; use [references/tools.d.ts](references/tools.d.ts) only for cross-source work or when no narrower shard applies.
 2. Put related calls, result extraction, filtering, and reshaping into one \`run_typescript\` execution.
-3. Return only the bounded value needed to answer the user.
-4. Use \`search_tools\` when the generated catalog is pending or stale, does not contain the needed capability, or the client cannot search a large declaration reference efficiently.
+3. Return only the bounded value needed to answer the user. Project requested fields, omit empty metadata, cap collections, and summarize large result sets instead of returning raw upstream payloads.
+4. Use \`search_tools\` when the generated catalog is pending or stale, does not contain the needed capability, or the available client cannot search declaration files efficiently.
 5. Treat tool errors as data you can catch and handle; do not bypass tool policy or sandbox limits.
 
 Read [references/runtime.md](references/runtime.md) for execution rules, [references/result-contract.md](references/result-contract.md) for MCP result extraction, and [references/examples.md](references/examples.md) for composition patterns.
@@ -275,9 +303,9 @@ The server exposes a small Code Mode surface:
 
 The sandbox exposes \`tools\` and a limited set of safe JavaScript globals. It does not expose Node.js modules, filesystem APIs, process APIs, network APIs, dynamic imports, or arbitrary package imports.
 
-Prefer one execution that calls, combines, and reduces upstream results. Use \`Promise.all\` only for independent operations. Keep the final return value small; do not return raw payloads when a projection or summary is sufficient.
+Prefer one execution that calls, combines, and reduces upstream results. Use \`Promise.all\` only for independent operations. Project requested fields, remove null or empty metadata, cap collections to the smallest useful number of rows, and return counts or summaries for larger sets. Do not return raw upstream payloads.
 
-The generated declaration snapshot is authoritative for its recorded catalog revision. If a call is missing or fails with \`TOOL_NOT_FOUND\`, use \`search_tools\` to inspect the live catalog and then refresh the snapshot with \`npm run plugin:sync\` when maintaining the plugin.
+The generated declaration snapshot is authoritative for its recorded catalog revision. \`catalog-metadata.json\` indexes the complete catalog, per-source files, and bounded tool-prefix shards. Start with the narrowest applicable shard so unrelated declarations stay out of context. If a call is missing or fails with \`TOOL_NOT_FOUND\`, use \`search_tools\` to inspect the live catalog and then refresh the snapshot with \`npm run plugin:sync\` when maintaining the plugin.
 `;
 }
 
@@ -307,7 +335,7 @@ Tool failures throw a catchable \`ToolCallError\` with \`code\`, \`phase\`, and 
 function renderExamplesReference(): string {
   return `# Composition examples
 
-Replace the source, tool, and input names with declarations from \`tools.d.ts\`.
+Replace the source, tool, and input names with declarations from the narrowest file indexed by \`catalog-metadata.json\`.
 
 ## Extract structured data
 
@@ -357,13 +385,6 @@ function renderPendingDeclarations(): string {
 `;
 }
 
-function renderCatalogDeclarations(revision: string, declarations: string): string {
-  return `// Generated by CodeModeKit from catalog revision ${revision}.
-// Refresh with: npm run plugin:sync
-
-${declarations.trim()}\n`;
-}
-
 async function stableCatalogSnapshot(
   codeMode: AgentPluginCatalogSource,
   signal: AbortSignal | undefined,
@@ -383,12 +404,6 @@ async function stableCatalogSnapshot(
 
 async function writeJson(file: string, value: unknown): Promise<void> {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-async function atomicWrite(file: string, contents: string): Promise<void> {
-  const temporary = `${file}.${String(process.pid)}.tmp`;
-  await writeFile(temporary, contents, "utf8");
-  await rename(temporary, file);
 }
 
 function validatePortableName(value: string, label: string): string {

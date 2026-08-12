@@ -17,6 +17,7 @@ import {
   isFail,
   type ExecutePendingJobsResult,
   type QuickJSContext,
+  type QuickJSDeferredPromise,
   type QuickJSHandle,
   type VmCallResult,
 } from "quickjs-emscripten";
@@ -208,6 +209,7 @@ export class QuickJsSandbox {
       request.limits.logBytes,
     );
     const pendingCalls = new Set<Promise<void>>();
+    const pendingDeferreds = new Set<QuickJSDeferredPromise>();
     const jobFailure = deferredFailure();
     let alive = true;
     let computeUsedMs = 0;
@@ -245,7 +247,14 @@ export class QuickJsSandbox {
 
       unwrapImmediate(context, context.evalCode(PRUNE_GLOBALS_SOURCE, "bootstrap.js"));
       installConsole(context, logs);
-      installToolBridge(context, request, pendingCalls, runPendingJobs, () => alive);
+      installToolBridge(
+        context,
+        request,
+        pendingCalls,
+        pendingDeferreds,
+        runPendingJobs,
+        () => alive,
+      );
       setGlobalString(
         context,
         "__codeModeToolDefinitions",
@@ -361,6 +370,10 @@ export class QuickJsSandbox {
       alive = false;
       cancellation.dispose();
       runtime.removeInterruptHandler();
+      for (const deferred of pendingDeferreds) {
+        deferred.dispose();
+      }
+      pendingDeferreds.clear();
       context.dispose();
       runtime.dispose();
     }
@@ -371,6 +384,7 @@ function installToolBridge(
   context: QuickJSContext,
   request: SandboxExecuteRequest,
   pendingCalls: Set<Promise<void>>,
+  pendingDeferreds: Set<QuickJSDeferredPromise>,
   runPendingJobs: () => void,
   isAlive: () => boolean,
 ): void {
@@ -378,6 +392,7 @@ function installToolBridge(
     "__codeModeCallTool",
     (sourceHandle, toolHandle, inputHandle) => {
       const deferred = context.newPromise();
+      pendingDeferreds.add(deferred);
       const source = context.getString(sourceHandle);
       const tool = context.getString(toolHandle);
       const inputJson = context.getString(inputHandle);
@@ -402,7 +417,10 @@ function installToolBridge(
 
       pendingCalls.add(pending);
       void pending.finally(() => pendingCalls.delete(pending));
-      void deferred.settled.then(runPendingJobs);
+      void deferred.settled.then(() => {
+        pendingDeferreds.delete(deferred);
+        runPendingJobs();
+      });
       return deferred.handle;
     },
   );

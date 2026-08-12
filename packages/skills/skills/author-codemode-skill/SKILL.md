@@ -11,7 +11,7 @@ Turn a mechanically valid CodeModeKit plugin into a useful domain product. The c
 
 1. Locate `plugin.json`, `mcp.json`, `src/server.mjs`, `package.json`, and every immediate `skills/*/SKILL.md`.
 2. Run `npm run plugin:sync` when the configured sources are available. If it fails, preserve the current generated files and report the connectivity or credential blocker.
-3. Read `references/catalog-metadata.json` and search focused sections of `references/tools.d.ts`. Never edit either file; CodeModeKit owns them.
+3. Read `references/catalog-metadata.json` and search the narrowest indexed prefix or source declaration file. Use `references/tools.d.ts` only for cross-source work or when no narrower shard applies. Never edit generated declaration files; CodeModeKit owns them.
 4. Inspect project documentation, tests, source configuration, tool descriptions, policy, and existing examples for domain evidence.
 5. Read [references/discovery.md](references/discovery.md) and create a concise authoring brief. Ask the user only for high-impact facts that cannot be recovered locally. Do not invent organization policy, approval boundaries, or intended users.
 
@@ -29,7 +29,7 @@ Choose the few user jobs that justify activating this skill. For each one, ident
 - the smallest useful final value; and
 - common failure and recovery behavior.
 
-Read [references/runtime-skill-design.md](references/runtime-skill-design.md) before editing. A good runtime skill teaches decisions and workflows that cannot be derived from `tools.d.ts`; it does not restate the whole catalog.
+Read [references/runtime-skill-design.md](references/runtime-skill-design.md) before editing. A good runtime skill teaches decisions and workflows that cannot be derived from generated declarations; it does not restate the whole catalog.
 
 Design is complete when each selected job maps to exact current tools, a result contract, its ambiguity and safety decisions, and a checkable completion condition.
 
@@ -68,7 +68,7 @@ Evaluation is complete when every minimum case has an observed result and each f
 Do not report the runtime skill as polished unless:
 
 - its description names concrete triggering requests and avoids claiming unrelated tasks;
-- every documented tool call exists in the current `tools.d.ts` and matches its input shape;
+- every documented tool call exists in the current generated declarations and matches its input shape;
 - examples return bounded user-relevant values rather than raw provider payloads;
 - write workflows state when to clarify, preview, confirm, or stop based on the user's actual policy;
 - live `search_tools` remains the recovery path for stale or dynamic catalogs;

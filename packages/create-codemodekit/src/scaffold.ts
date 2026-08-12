@@ -12,16 +12,17 @@ import { installProjectAuthoringSkills } from "./authoring-skill.js";
 import type { ParsedCommand } from "./command.js";
 import {
   renderEnvExample,
-  renderSource,
-  renderSourceReadme,
+  renderSources,
+  renderSourcesReadme,
   type ScaffoldSource,
 } from "./source-template.js";
+import { renderVerifyScript } from "./verify-template.js";
 
 export type { ScaffoldSource } from "./source-template.js";
 
 const PACKAGE_VERSION = readPackageVersion();
 // The generator and batteries-included runtime release independently.
-const DEFAULT_CODEMODEKIT_VERSION = "^0.3.0";
+const DEFAULT_CODEMODEKIT_VERSION = "^0.4.0";
 const DEFAULT_CREATE_CODEMODEKIT_VERSION = `^${PACKAGE_VERSION}`;
 
 export interface AgentPluginScaffoldOptions {
@@ -35,6 +36,8 @@ export interface AgentPluginScaffoldOptions {
 
 export interface ScaffoldCodeModeMcpOptions {
   readonly targetDirectory: string;
+  /** Tool sources to combine beneath one generated Code Mode catalog. */
+  readonly sources?: readonly ScaffoldSource[];
   /** Tool source to wrap. Prefer this over the legacy mcpName/mcpCommand pair. */
   readonly source?: ScaffoldSource;
   /** @deprecated Use source: { type: "mcp-stdio", ... }. */
@@ -78,8 +81,11 @@ export async function scaffoldCodeModeMcp(
 ): Promise<ScaffoldResult> {
   const cwd = options.cwd ?? process.cwd();
   const directory = path.resolve(cwd, options.targetDirectory);
-  const source = resolveSource(options);
-  const sourceName = source.type === "weather" ? "weather" : source.name;
+  const sources = resolveSources(options);
+  const sourceName =
+    sources.length === 1
+      ? resolvedSourceName(sources[0] as ScaffoldSource)
+      : "multi-source";
   const serverName = required(
     options.serverName ?? `${sourceName}-code-mode`,
     "Server name",
@@ -115,7 +121,10 @@ export async function scaffoldCodeModeMcp(
   );
 
   await ensureEmptyDirectory(directory);
-  await mkdir(path.join(directory, "src"), { recursive: true });
+  await Promise.all([
+    mkdir(path.join(directory, "src"), { recursive: true }),
+    mkdir(path.join(directory, "scripts"), { recursive: true }),
+  ]);
 
   const packageJson = {
     name: packageName,
@@ -125,6 +134,7 @@ export async function scaffoldCodeModeMcp(
     engines: { node: ">=20" },
     scripts: {
       start: "node src/server.mjs",
+      verify: "node scripts/verify.mjs",
       ...(agentPluginOptions === undefined
         ? {}
         : {
@@ -136,13 +146,12 @@ export async function scaffoldCodeModeMcp(
           }),
     },
     dependencies: { "codemodekit": codemodekitVersion },
-    ...(agentPluginOptions === undefined
-      ? {}
-      : {
-          devDependencies: {
-            "create-codemodekit": createCodemodekitVersion,
-          },
-        }),
+    devDependencies: {
+      "@modelcontextprotocol/client": "2.0.0-beta.5",
+      ...(agentPluginOptions === undefined
+        ? {}
+        : { "create-codemodekit": createCodemodekitVersion }),
+    },
   };
 
   const entrypoint = path.join(directory, "src", "server.mjs");
@@ -159,7 +168,7 @@ export async function scaffoldCodeModeMcp(
     ),
     writeFile(
       path.join(directory, ".env.example"),
-      renderEnvExample(source),
+      renderEnvExample(sources),
       "utf8",
     ),
     writeFile(
@@ -167,7 +176,7 @@ export async function scaffoldCodeModeMcp(
       renderProjectReadme({
         packageName,
         serverName,
-        source,
+        sources,
         policy,
         agentPlugin: agentPluginOptions !== undefined,
         authoringSkill: includeAuthoringSkill,
@@ -178,12 +187,17 @@ export async function scaffoldCodeModeMcp(
       entrypoint,
       renderServer({
         serverName,
-        source,
+        sources,
         policy,
         ...(skillName === undefined
           ? {}
           : { agentPlugin: { skillName } }),
       }),
+      "utf8",
+    ),
+    writeFile(
+      path.join(directory, "scripts", "verify.mjs"),
+      renderVerifyScript(sources.map(resolvedSourceName)),
       "utf8",
     ),
   ]);
@@ -271,7 +285,7 @@ export async function scaffoldCodeModeMcp(
 
 interface RenderServerOptions {
   readonly serverName: string;
-  readonly source: ScaffoldSource;
+  readonly sources: readonly ScaffoldSource[];
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin?: {
     readonly skillName: string;
@@ -281,7 +295,7 @@ interface RenderServerOptions {
 interface RenderProjectReadmeOptions {
   readonly packageName: string;
   readonly serverName: string;
-  readonly source: ScaffoldSource;
+  readonly sources: readonly ScaffoldSource[];
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin: boolean;
   readonly authoringSkill: boolean;
@@ -319,7 +333,7 @@ The project-local \`.agents/skills/build-codemodekit-server\` and \`.agents/skil
 After the catalog is synchronized, ask the coding agent to use \`$author-codemode-skill\` before distributing the generated runtime skill.
 `
     : "";
-  const sourceSection = renderSourceReadme(options.source);
+  const sourceSection = renderSourcesReadme(options.sources);
   return `# ${options.packageName}
 
 Code Mode MCP server generated by [CodeModeKit](https://github.com/stjbrown/codemodekit).
@@ -328,6 +342,9 @@ Code Mode MCP server generated by [CodeModeKit](https://github.com/stjbrown/code
 
 \`\`\`sh
 npm start
+
+# Validate the Code Mode surface and sandbox without calling provider tools
+npm run verify
 \`\`\`
 
 The downstream server is \`${options.serverName}\`.
@@ -335,6 +352,8 @@ The downstream server is \`${options.serverName}\`.
 ${sourceSection}
 
 The generated tool policy is \`${options.policy}\`. Review \`src/server.mjs\` before exposing the server, and keep credentials in uncommitted environment files or the upstream tool's supported secret mechanism.
+
+For an end-to-end provider assertion, put a bounded TypeScript composition in a file that returns an object containing \`verified: true\`, then run \`CODEMODEKIT_VERIFY_CODE_FILE=verify/live.ts npm run verify\`. Export the variables shown in \`.env.example\` with your preferred environment manager before starting or verifying the server.
 ${pluginSection}${authoringSection}
 `;
 }
@@ -342,21 +361,21 @@ ${pluginSection}${authoringSection}
 export function renderServer(options: RenderServerOptions): string {
   const policyFactory =
     options.policy === "allow-all" ? "allowAllToolCalls" : "denyAllToolCalls";
-  const source = renderSource(options.source);
+  const sources = renderSources(options.sources);
   const plugin = options.agentPlugin;
   const nodeImport =
     plugin === undefined ? "" : 'import { fileURLToPath } from "node:url";\n\n';
   const imports = [
     policyFactory,
     ...(plugin === undefined ? [] : ["createCodeModeMcp"]),
-    ...source.imports,
+    ...sources.imports,
     "serveCodeModeStdio",
   ].sort();
   const application = `const options = {
   name: ${JSON.stringify(options.serverName)},
   version: "0.1.0",
   toolPolicy: ${policyFactory}(),
-  sources: [${source.expression}],
+  sources: [${sources.expressions.join("")}],
 };
 `;
   const launch =
@@ -367,7 +386,7 @@ export function renderServer(options: RenderServerOptions): string {
 ${imports.map((name) => `  ${name},`).join("\n")}
 } from "codemodekit";
 
-${source.prelude}${application}
+${sources.prelude}${application}
 ${launch}`;
 }
 
@@ -394,39 +413,121 @@ function renderAgentPluginLaunch(skillName: string, serverName: string): string 
 `;
 }
 
-function resolveSource(options: ScaffoldCodeModeMcpOptions): ScaffoldSource {
+function resolveSources(
+  options: ScaffoldCodeModeMcpOptions,
+): readonly ScaffoldSource[] {
   if (
-    options.source !== undefined &&
+    (options.source !== undefined || options.sources !== undefined) &&
     (options.mcpName !== undefined || options.mcpCommand !== undefined)
   ) {
-    throw new TypeError("Use either source or mcpName/mcpCommand, not both");
+    throw new TypeError(
+      "Use sources, source, or mcpName/mcpCommand, not a combination",
+    );
   }
-  if (options.source !== undefined) {
-    switch (options.source.type) {
-      case "weather":
-        return options.source;
-      case "mcp-stdio":
-        return {
-          type: "mcp-stdio",
-          name: required(options.source.name, "MCP name"),
-          command: validateCommand(options.source.command),
-        };
-      case "mcp-http":
-        return {
-          type: "mcp-http",
-          name: required(options.source.name, "MCP name"),
-          url: validateHttpUrl(options.source.url),
-        };
+  if (options.source !== undefined && options.sources !== undefined) {
+    throw new TypeError("Use either sources or source, not both");
+  }
+  const candidates =
+    options.sources ??
+    (options.source === undefined ? undefined : [options.source]);
+  if (candidates !== undefined) {
+    if (candidates.length === 0) {
+      throw new TypeError("At least one source is required");
     }
+    const resolved = candidates.map((source): ScaffoldSource => {
+      switch (source.type) {
+        case "weather":
+          return source;
+        case "mcp-stdio":
+          return {
+            type: "mcp-stdio",
+            name: required(source.name, "MCP name"),
+            command: validateCommand(source.command),
+          };
+        case "mcp-http": {
+          const bearerTokenEnv = validateOptionalEnvironmentName(
+            source.bearerTokenEnv,
+          );
+          const headerEnv = validateHeaderEnvironment(source.headerEnv);
+          if (
+            bearerTokenEnv !== undefined &&
+            Object.keys(headerEnv).some(
+              (header) => header.toLowerCase() === "authorization",
+            )
+          ) {
+            throw new TypeError(
+              "Use either bearerTokenEnv or an Authorization headerEnv mapping",
+            );
+          }
+          return {
+            type: "mcp-http",
+            name: required(source.name, "MCP name"),
+            url: validateHttpUrl(source.url),
+            ...(bearerTokenEnv === undefined ? {} : { bearerTokenEnv }),
+            ...(Object.keys(headerEnv).length === 0 ? {} : { headerEnv }),
+          };
+        }
+      }
+    });
+    const names = resolved.map(resolvedSourceName);
+    const duplicate = names.find(
+      (name, index) => names.indexOf(name) !== index,
+    );
+    if (duplicate !== undefined) {
+      throw new TypeError(`Duplicate source name: ${duplicate}`);
+    }
+    return resolved;
   }
   if (options.mcpName === undefined || options.mcpCommand === undefined) {
     throw new TypeError("A source or mcpName/mcpCommand pair is required");
   }
-  return {
-    type: "mcp-stdio",
-    name: required(options.mcpName, "MCP name"),
-    command: validateCommand(options.mcpCommand),
-  };
+  return [
+    {
+      type: "mcp-stdio",
+      name: required(options.mcpName, "MCP name"),
+      command: validateCommand(options.mcpCommand),
+    },
+  ];
+}
+
+function resolvedSourceName(source: ScaffoldSource): string {
+  return source.type === "weather" ? "weather" : source.name;
+}
+
+function validateOptionalEnvironmentName(
+  value: string | undefined,
+): string | undefined {
+  return value === undefined ? undefined : validateEnvironmentName(value);
+}
+
+function validateEnvironmentName(value: string): string {
+  const name = required(value, "Environment variable name");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+    throw new TypeError(`Invalid environment variable name: ${name}`);
+  }
+  return name;
+}
+
+function validateHeaderEnvironment(
+  value: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> {
+  const entries = Object.entries(value ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  const result: Record<string, string> = {};
+  const normalizedHeaders = new Set<string>();
+  for (const [header, environment] of entries) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(header)) {
+      throw new TypeError(`Invalid HTTP header name: ${header}`);
+    }
+    const normalized = header.toLowerCase();
+    if (normalizedHeaders.has(normalized)) {
+      throw new TypeError(`Duplicate HTTP header name: ${header}`);
+    }
+    normalizedHeaders.add(normalized);
+    result[header] = validateEnvironmentName(environment);
+  }
+  return result;
 }
 
 function validateCommand(command: ParsedCommand): ParsedCommand {

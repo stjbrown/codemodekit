@@ -383,6 +383,8 @@ skills/
       result-contract.md
       examples.md
       tools.d.ts
+      tools.github.d.ts
+      tools.github.issues.d.ts
       catalog-metadata.json
 ```
 
@@ -400,7 +402,7 @@ When a skill is activated, the agent receives:
 
 Because a skill can document exact calls, it can often invoke `run_typescript` directly. `search_tools` remains available by default for incomplete documentation, unfamiliar capabilities, dynamic catalogs, or recovery from a missing tool. Consumers with complete, maintained skills can disable it explicitly.
 
-Catalog generation and semantic authorship are separate. CodeModeKit owns `tools.d.ts`, catalog metadata, and portable artifact construction. A coding agent using `@codemodekit/skills` owns the runtime skill's domain triggers, user jobs, safety decisions, workflows, and worked compositions. Generated catalog refresh must not overwrite those authored files. The `build-codemodekit-server` development skill creates and verifies the execution surface; `author-codemode-skill` then inspects repository evidence and the live catalog, asks only for consequential missing intent, and maintains the runtime skill and Agent Plugin metadata. See ADR 0020.
+Catalog generation and semantic authorship are separate. CodeModeKit owns the complete `tools.d.ts`, per-source `tools.<source>.d.ts` files, bounded tool-prefix shards, catalog metadata, and portable artifact construction. Filenames are normalized and hash-disambiguated when source or prefix names collide. Sync stages the new generated set, replaces it as one transaction with rollback, removes stale generated shards, and writes catalog metadata last as the commit marker. A coding agent using `@codemodekit/skills` owns the runtime skill's domain triggers, user jobs, safety decisions, workflows, and worked compositions. Generated catalog refresh must not overwrite those authored files. The `build-codemodekit-server` development skill creates and verifies the execution surface; `author-codemode-skill` then inspects repository evidence and the live catalog, asks only for consequential missing intent, and maintains the runtime skill and Agent Plugin metadata. See ADR 0020.
 
 `search_tools` searches only the current active, model-visible catalog. It performs deterministic local lexical ranking over configured source names, exact tool names and addresses, descriptions, and schema property names. It never uses embeddings, external search, app-only tools, or quarantined tools.
 
@@ -515,6 +517,15 @@ Terms intentionally avoided:
 - Standardizing an unofficial MCP Skills protocol.
 - Supporting every sandbox backend in the first release.
 - Exposing provider credentials or unrestricted networking to generated code.
+
+## Future native runtime targets
+
+Deno 2.9.5 introduced an experimental `deno compile --engine quickjs` backend. It is worth tracking as a possible smaller, faster-starting compiled host or deployment artifact, especially for future edge-oriented adapters. It is not a replacement for the current `quickjs-emscripten` sandbox: CodeModeKit embeds QuickJS in-process, controls its global surface, installs a host tool bridge, enforces execution and tool-call limits, and disposes each isolated runtime. Deno's backend compiles a whole Deno program to a QuickJS-based executable and currently has documented compatibility differences such as incomplete `Intl` support.
+
+No runtime change is planned for this release. Revisit the Deno backend only through the sandbox conformance and security suite, and keep it behind an adapter boundary while it remains experimental.
+
+- [Deno 2.9.5 release](https://github.com/denoland/deno/releases/tag/v2.9.5)
+- [QuickJS compile backend implementation](https://github.com/denoland/deno/pull/36194)
 
 ## Deferred decisions
 

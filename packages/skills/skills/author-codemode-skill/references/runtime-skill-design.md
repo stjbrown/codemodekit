@@ -16,7 +16,7 @@ A runtime skill should make the agent follow a predictable process while allowin
 
 CodeModeKit owns:
 
-- `references/tools.d.ts`;
+- `references/tools.d.ts` and every generated `references/tools.*.d.ts` shard;
 - `references/catalog-metadata.json`; and
 - `dist/plugin`.
 
@@ -43,7 +43,7 @@ Keep `SKILL.md` procedural and compact:
 4. link to exact references with a condition for reading each; and
 5. define the completion standard.
 
-Do not paste the entire catalog into the body. Search `tools.d.ts` for exact names and shapes. Preserve `search_tools` as the live recovery path when declarations are pending, stale, incomplete, or too large to search efficiently.
+Do not paste the entire catalog into the body. Use `catalog-metadata.json` to select the narrowest prefix or source shard, then search it for exact names and shapes. Preserve `search_tools` as the live recovery path when declarations are pending, stale, or incomplete.
 
 ## Code Mode examples
 
@@ -60,12 +60,12 @@ return {
 };
 ```
 
-- Use exact names and schemas from `tools.d.ts`.
+- Use exact names and schemas from the generated declaration shards.
 - Prefer `structuredContent`; inspect text content defensively only when the provider lacks structured output.
 - Use `Promise.all` only for independent calls.
 - Pass the smallest necessary data between calls.
 - Filter, join, aggregate, and reshape in the sandbox.
-- Return only what the user needs.
+- Project only requested fields, omit empty metadata, and cap returned collections. Use counts or summaries when a full result set is not necessary.
 - Catch a tool error only when the workflow can recover or add a useful bounded outcome.
 
 ## Write workflows

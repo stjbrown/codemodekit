@@ -210,6 +210,7 @@ export class ToolCatalog {
         source: entry.source,
         definition: entry.definition,
       })),
+      this.#sourceStatuses.keys(),
     );
   }
 

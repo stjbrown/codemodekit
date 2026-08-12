@@ -271,6 +271,24 @@ export interface StartupReport {
 export interface TypeScriptCatalog {
   readonly catalogRevision: string;
   readonly declarations: string;
+  /** Standalone declarations for each provider source and its bounded shards. */
+  readonly sources: readonly TypeScriptCatalogSource[];
+}
+
+export interface TypeScriptCatalogSource {
+  readonly source: string;
+  readonly toolCount: number;
+  readonly declarations: string;
+  readonly shards: readonly TypeScriptCatalogShard[];
+}
+
+export interface TypeScriptCatalogShard {
+  /** Stable, filename-safe input derived from tool-name prefix tokens. */
+  readonly key: string;
+  /** Human-searchable tool-name prefixes represented by this shard. */
+  readonly prefixes: readonly string[];
+  readonly toolCount: number;
+  readonly declarations: string;
 }
 
 export interface CatalogDiagnostic {

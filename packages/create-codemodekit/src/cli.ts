@@ -10,11 +10,17 @@ import {
   type ScaffoldSource,
 } from "./scaffold.js";
 
+interface CliMcpDraft {
+  name?: string;
+  command?: string;
+  url?: string;
+  bearerTokenEnv?: string;
+  headerEnv: Record<string, string>;
+}
+
 interface CliDraft {
   readonly targetDirectory?: string;
-  readonly mcpName?: string;
-  readonly mcpCommand?: string;
-  readonly mcpUrl?: string;
+  readonly mcpSources?: readonly CliMcpDraft[];
   readonly example?: "weather";
   readonly serverName?: string;
   readonly pluginName?: string;
@@ -33,15 +39,13 @@ interface CliDraft {
 interface CliOptions extends Omit<
   CliDraft,
   | "targetDirectory"
-  | "mcpName"
-  | "mcpCommand"
-  | "mcpUrl"
+  | "mcpSources"
   | "example"
   | "policy"
   | "agentPlugin"
 > {
   readonly targetDirectory: string;
-  readonly source: ScaffoldSource;
+  readonly sources: readonly ScaffoldSource[];
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin: boolean;
 }
@@ -91,7 +95,7 @@ export async function runCli(
 
   const result = await scaffoldCodeModeMcp({
     targetDirectory: options.targetDirectory,
-    source: options.source,
+    sources: options.sources,
     ...(options.serverName === undefined
       ? {}
       : { serverName: options.serverName }),
@@ -134,7 +138,10 @@ export async function runCli(
         `${result.agentPlugin.synced ? "" : "  npm run plugin:sync\n"}` +
         `${result.agentPlugin.built ? "" : "  npm run plugin:build\n"}` +
         "  npm run plugin:install:cursor\n";
-  const sourceName = options.source.type === "weather" ? "weather" : options.source.name;
+  const sourceName =
+    options.sources.length === 1
+      ? sourceDisplayName(options.sources[0] as ScaffoldSource)
+      : "multi-source";
   (runtime.write ?? process.stdout.write.bind(process.stdout))(
     `\nCreated ${options.serverName ?? `${sourceName}-code-mode`} in ${result.directory}\n\n` +
       `${result.installed ? "" : "  npm install\n"}  npm start\n\n` +
@@ -146,9 +153,8 @@ export async function runCli(
 
 function parseOptions(args: readonly string[]): CliDraft {
   let targetDirectory: string | undefined;
-  let mcpName: string | undefined;
-  let mcpCommand: string | undefined;
-  let mcpUrl: string | undefined;
+  const mcpSources: CliMcpDraft[] = [];
+  let activeSource: CliMcpDraft | undefined;
   let example: "weather" | undefined;
   let serverName: string | undefined;
   let pluginName: string | undefined;
@@ -215,14 +221,45 @@ function parseOptions(args: readonly string[]): CliDraft {
         example = value;
         break;
       case "--mcp-name":
-        mcpName = value;
+        if (activeSource === undefined) {
+          activeSource = { headerEnv: {} };
+          mcpSources.push(activeSource);
+        } else if (activeSource.name !== undefined) {
+          if (activeSource.command === undefined && activeSource.url === undefined) {
+            throw new TypeError("Each MCP source may have only one --mcp-name");
+          }
+          activeSource = { headerEnv: {} };
+          mcpSources.push(activeSource);
+        }
+        activeSource.name = value;
         break;
       case "--mcp-command":
-        mcpCommand = value;
+        activeSource ??= appendMcpDraft(mcpSources);
+        if (activeSource.command !== undefined || activeSource.url !== undefined) {
+          throw new TypeError("Begin each additional MCP source with --mcp-name");
+        }
+        activeSource.command = value;
         break;
       case "--mcp-url":
-        mcpUrl = value;
+        activeSource ??= appendMcpDraft(mcpSources);
+        if (activeSource.command !== undefined || activeSource.url !== undefined) {
+          throw new TypeError("Begin each additional MCP source with --mcp-name");
+        }
+        activeSource.url = value;
         break;
+      case "--mcp-bearer-env":
+        activeSource ??= appendMcpDraft(mcpSources);
+        activeSource.bearerTokenEnv = value;
+        break;
+      case "--mcp-header-env": {
+        activeSource ??= appendMcpDraft(mcpSources);
+        const separator = value.indexOf("=");
+        if (separator <= 0 || separator === value.length - 1) {
+          throw new TypeError("--mcp-header-env must be Header-Name=ENV_NAME");
+        }
+        activeSource.headerEnv[value.slice(0, separator)] = value.slice(separator + 1);
+        break;
+      }
       case "--server-name":
         serverName = value;
         break;
@@ -257,12 +294,9 @@ function parseOptions(args: readonly string[]): CliDraft {
 
   if (
     example !== undefined &&
-    [mcpName, mcpCommand, mcpUrl].some((value) => value !== undefined)
+    mcpSources.length > 0
   ) {
     throw new TypeError("--example cannot be combined with MCP source flags");
-  }
-  if (mcpCommand !== undefined && mcpUrl !== undefined) {
-    throw new TypeError("Use either --mcp-command or --mcp-url");
   }
   if (
     agentPlugin === false &&
@@ -275,9 +309,7 @@ function parseOptions(args: readonly string[]): CliDraft {
 
   return {
     ...(targetDirectory === undefined ? {} : { targetDirectory }),
-    ...(mcpName === undefined ? {} : { mcpName }),
-    ...(mcpCommand === undefined ? {} : { mcpCommand }),
-    ...(mcpUrl === undefined ? {} : { mcpUrl }),
+    ...(mcpSources.length === 0 ? {} : { mcpSources }),
     ...(example === undefined ? {} : { example }),
     ...(serverName === undefined ? {} : { serverName }),
     ...(pluginName === undefined ? {} : { pluginName }),
@@ -299,8 +331,28 @@ function parseOptions(args: readonly string[]): CliDraft {
 function requiresPrompt(draft: CliDraft): boolean {
   if (draft.targetDirectory === undefined) return true;
   if (draft.example !== undefined) return false;
-  if (draft.mcpCommand === undefined && draft.mcpUrl === undefined) return true;
-  return draft.mcpName === undefined;
+  if (draft.mcpSources === undefined) return true;
+  return draft.mcpSources.length === 1 && !isCompleteMcpDraft(draft.mcpSources[0]);
+}
+
+function appendMcpDraft(drafts: CliMcpDraft[]): CliMcpDraft {
+  const draft: CliMcpDraft = { headerEnv: {} };
+  drafts.push(draft);
+  return draft;
+}
+
+function isCompleteMcpDraft(
+  draft: CliMcpDraft | undefined,
+): draft is CliMcpDraft {
+  return (
+    draft !== undefined &&
+    draft.name !== undefined &&
+    (draft.command !== undefined || draft.url !== undefined)
+  );
+}
+
+function sourceDisplayName(source: ScaffoldSource): string {
+  return source.type === "weather" ? "weather" : source.name;
 }
 
 async function completeOptions(
@@ -310,25 +362,75 @@ async function completeOptions(
   const targetDirectory =
     draft.targetDirectory ??
     (await requiredInput(prompter, "Project directory", "weather-code-mode"));
-  let source: ScaffoldSource;
+  let sources: readonly ScaffoldSource[];
   if (draft.example === "weather") {
-    source = { type: "weather" };
-  } else if (draft.mcpCommand !== undefined) {
-    source = {
-      type: "mcp-stdio",
-      name:
-        draft.mcpName ??
-        (await requiredInput(prompter, "Tool source name", "upstream")),
-      command: parseMcpCommand(draft.mcpCommand),
-    };
-  } else if (draft.mcpUrl !== undefined) {
-    source = {
-      type: "mcp-http",
-      name:
-        draft.mcpName ??
-        (await requiredInput(prompter, "Tool source name", "upstream")),
-      url: draft.mcpUrl,
-    };
+    sources = [{ type: "weather" }];
+  } else if (draft.mcpSources !== undefined) {
+    if (draft.mcpSources.length > 1 && draft.mcpSources.some((source) => !isCompleteMcpDraft(source))) {
+      throw new TypeError("Every repeated MCP source requires --mcp-name and either --mcp-command or --mcp-url");
+    }
+    const sourceDrafts = [...draft.mcpSources];
+    const onlySource = sourceDrafts[0];
+    if (
+      sourceDrafts.length === 1 &&
+      onlySource !== undefined &&
+      onlySource.command === undefined &&
+      onlySource.url === undefined
+    ) {
+      if (prompter === undefined) {
+        throw new TypeError(
+          "Each MCP source requires --mcp-command or --mcp-url",
+        );
+      }
+      const transport = await prompter.select(
+        "How should the MCP source connect?",
+        [
+          { label: "MCP command", value: "mcp-command" },
+          { label: "Remote MCP URL", value: "mcp-url" },
+        ] as const,
+        onlySource.bearerTokenEnv !== undefined ||
+          Object.keys(onlySource.headerEnv).length > 0
+          ? "mcp-url"
+          : "mcp-command",
+      );
+      sourceDrafts[0] =
+        transport === "mcp-command"
+          ? {
+              ...onlySource,
+              command: await requiredInput(prompter, "MCP command"),
+            }
+          : {
+              ...onlySource,
+              url: await requiredInput(prompter, "Remote MCP URL"),
+            };
+    }
+    sources = await Promise.all(
+      sourceDrafts.map(async (source): Promise<ScaffoldSource> => {
+        const name =
+          source.name ??
+          (await requiredInput(prompter, "Tool source name", "upstream"));
+        if (source.command !== undefined) {
+          if (source.bearerTokenEnv !== undefined || Object.keys(source.headerEnv).length > 0) {
+            throw new TypeError("HTTP authentication flags require --mcp-url");
+          }
+          return { type: "mcp-stdio", name, command: parseMcpCommand(source.command) };
+        }
+        if (source.url !== undefined) {
+          return {
+            type: "mcp-http",
+            name,
+            url: source.url,
+            ...(source.bearerTokenEnv === undefined
+              ? {}
+              : { bearerTokenEnv: source.bearerTokenEnv }),
+            ...(Object.keys(source.headerEnv).length === 0
+              ? {}
+              : { headerEnv: source.headerEnv }),
+          };
+        }
+        throw new TypeError("Each MCP source requires --mcp-command or --mcp-url");
+      }),
+    );
   } else {
     if (prompter === undefined) throw new TypeError("A tool source is required");
     const starter = await prompter.select(
@@ -341,23 +443,23 @@ async function completeOptions(
       "weather",
     );
     if (starter === "weather") {
-      source = { type: "weather" };
+      sources = [{ type: "weather" }];
     } else {
       const name = await requiredInput(prompter, "Tool source name", "upstream");
       if (starter === "mcp-command") {
-        source = {
+        sources = [{
           type: "mcp-stdio",
           name,
           command: parseMcpCommand(
             await requiredInput(prompter, "MCP command"),
           ),
-        };
+        }];
       } else {
-        source = {
+        sources = [{
           type: "mcp-http",
           name,
           url: await requiredInput(prompter, "Remote MCP URL"),
-        };
+        }];
       }
     }
   }
@@ -367,7 +469,7 @@ async function completeOptions(
     draft.agentPlugin ??
     (interactive
       ? await prompter.confirm("Generate an Agent Plugin?", true)
-      : source.type === "weather");
+      : sources.length === 1 && sources[0]?.type === "weather");
   const policy =
     draft.policy ??
     (interactive
@@ -395,7 +497,7 @@ async function completeOptions(
 
   return {
     targetDirectory,
-    source,
+    sources,
     ...(draft.serverName === undefined ? {} : { serverName: draft.serverName }),
     ...(draft.pluginName === undefined ? {} : { pluginName: draft.pluginName }),
     ...(draft.skillName === undefined ? {} : { skillName: draft.skillName }),
@@ -495,13 +597,22 @@ MCP command:
 Remote MCP:
   npm create codemodekit@latest my-code-mode -- \\
     --mcp-name <name> \\
-    --mcp-url <https://example.com/mcp>
+    --mcp-url <https://example.com/mcp> \\
+    --mcp-bearer-env MCP_TOKEN
+
+Multiple sources (repeat a complete group):
+  npm create codemodekit@latest my-code-mode -- \\
+    --mcp-name github --mcp-command 'docker run ...' \\
+    --mcp-name tickets --mcp-url https://example.com/mcp \\
+    --mcp-header-env X-Tenant-ID=TICKETS_TENANT
 
 Options:
   --example weather          Generate the editable Open-Meteo Local Tools starter
-  --mcp-name <name>          Name beneath tools.* for an MCP source
+  --mcp-name <name>          Begin a source group and name it beneath tools.*
   --mcp-command <command>    Shell-free stdio MCP executable and arguments
   --mcp-url <url>            Streamable HTTP MCP endpoint
+  --mcp-bearer-env <ENV>     Read an HTTP bearer token from ENV at runtime
+  --mcp-header-env <H=ENV>   Read HTTP header H from ENV; may be repeated
   --server-name <name>       Downstream MCP server name
   --policy allow-all         Allow every discovered tool (default)
   --policy deny-all          Deny every tool until policy is edited
