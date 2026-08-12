@@ -8,7 +8,7 @@ import {
   type ErrorObject,
 } from "ajv/dist/2020.js";
 import {
-  installProjectAuthoringSkill,
+  installProjectAuthoringSkills,
   scaffoldAgentPlugin,
 } from "create-codemodekit";
 import { afterEach, describe, expect, it } from "vitest";
@@ -54,17 +54,29 @@ describe("generated Agent Plugin conformance", () => {
     ]);
   });
 
-  it("ships a conformant project authoring skill", async () => {
+  it("ships two conformant project authoring skills", async () => {
     const root = await mkdtemp(path.join(workspaceRoot, ".authoring-skill-"));
     tempDirectories.push(root);
-    const skillDirectory = await installProjectAuthoringSkill({ root });
-    expect(skillDirectory).toBe(
-      path.join(root, ".agents", "skills", "build-codemodekit-plugin"),
+    const result = await installProjectAuthoringSkills({ root });
+    const builder = result.directories["build-codemodekit-server"];
+    const author = result.directories["author-codemode-skill"];
+    expect(builder).toBe(
+      path.join(root, ".agents", "skills", "build-codemodekit-server"),
     );
-    await expectSkillConforms(skillDirectory, "build-codemodekit-plugin", [
+    expect(author).toBe(
+      path.join(root, ".agents", "skills", "author-codemode-skill"),
+    );
+    await expectSkillConforms(builder ?? "", "build-codemodekit-server", [
       "references/generator.md",
-      "references/programmatic-api.md",
-      "references/plugin-layout.md",
+      "references/server-api.md",
+      "references/policy-and-security.md",
+      "references/verification.md",
+    ]);
+    await expectSkillConforms(author ?? "", "author-codemode-skill", [
+      "references/discovery.md",
+      "references/runtime-skill-design.md",
+      "references/plugin-maintenance.md",
+      "references/evaluation.md",
     ]);
   });
 });

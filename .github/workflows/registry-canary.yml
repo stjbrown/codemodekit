@@ -1,0 +1,42 @@
+name: Registry canary
+
+on:
+  workflow_run:
+    workflows: ["Publish npm packages"]
+    types: [completed]
+  schedule:
+    - cron: "23 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-registry-canary
+  cancel-in-progress: true
+
+jobs:
+  public-distribution:
+    if: >-
+      github.repository == 'stjbrown/codemodekit' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - uses: pnpm/setup@v1
+        with:
+          cache: false
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:registry
+      - name: Verify public skills.sh installation
+        run: pnpm run test:skills
+        env:
+          CODEMODEKIT_SKILLS_SOURCE: stjbrown/codemodekit
+          CODEMODEKIT_SKILLS_CLI_VERSION: latest

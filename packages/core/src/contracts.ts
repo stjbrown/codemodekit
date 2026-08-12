@@ -43,10 +43,7 @@ export interface ProviderCallContext {
   readonly signal: AbortSignal;
 }
 
-/**
- * Experimental in v0.1. McpToolProvider is the only supported production
- * implementation until heterogeneous providers arrive in v2.
- */
+/** Provider-neutral boundary implemented by MCP and application-owned sources. */
 export interface ToolProvider {
   readonly sourceName: string;
   start(context: ProviderStartContext): Promise<readonly NormalizedTool[]>;

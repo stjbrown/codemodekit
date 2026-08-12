@@ -1,8 +1,58 @@
 # CodeModeKit
 
-CodeModeKit turns tool sources into safe, programmable Code Mode servers. Today it ships a batteries-included MCP provider; OpenAPI and public local-tool adapters are planned. Model-authored TypeScript runs in a bounded QuickJS/WASM sandbox while `tools.*` calls are routed to trusted host-side providers.
+CodeModeKit turns tool sources into safe, programmable Code Mode servers. It ships batteries-included MCP and application-owned Local Tool providers; OpenAPI is planned. Model-authored TypeScript runs in a bounded QuickJS/WASM sandbox while `tools.*` calls are routed to trusted host-side providers.
 
-## Create a server
+## Install the skills, then go
+
+Give CodeModeKit to Cursor, Codex, Claude Code, or another compatible coding agent with the open [skills CLI](https://skills.sh/):
+
+```sh
+npx skills add stjbrown/codemodekit
+```
+
+Select both skills when prompted:
+
+- `build-codemodekit-server` scaffolds, configures, and verifies Code Mode MCP servers from Local Tools or upstream MCPs.
+- `author-codemode-skill` turns the generated companion skill into domain-aware runtime guidance and maintains the Agent Plugin package.
+
+Then tell your agent what you want, for example: _Use the build-codemodekit-server skill to create a Code Mode MCP for my tools._ When the runtime works: _Use the author-codemode-skill skill to turn the companion skill into useful workflows for this domain._
+
+Each skill can also be installed independently:
+
+```sh
+npx skills add stjbrown/codemodekit --skill build-codemodekit-server
+npx skills add stjbrown/codemodekit --skill author-codemode-skill
+```
+
+For a non-interactive install of the complete set, select all skills and add the agent you use:
+
+```sh
+npx skills add stjbrown/codemodekit \
+  --skill '*' \
+  --agent cursor \
+  --copy \
+  --yes
+```
+
+## Start with weather
+
+Run the interactive generator and accept its defaults:
+
+```sh
+npm create codemodekit@latest
+```
+
+Or generate the same editable, keyless starter non-interactively:
+
+```sh
+npm create codemodekit@latest weather-code-mode -- --example weather
+cd weather-code-mode
+npm start
+```
+
+The starter exposes `weather.findLocation` and `weather.getCurrentWeather` as host-side Local Tools. An agent can geocode a city, fetch current conditions, and reshape the result inside one `run_typescript` call. It also generates and builds a portable Agent Plugin by default. The example uses Open-Meteo's public non-commercial endpoints; its generated `.env.example` shows how to select customer or self-hosted endpoints.
+
+## Wrap an MCP server
 
 Scaffold a runnable Code Mode MCP and portable Agent Plugin around [GitHub's official MCP server](https://github.com/github/github-mcp-server):
 
@@ -20,7 +70,9 @@ npm start
 
 The generator installs dependencies and creates one executable source file. With `--agent-plugin`, it also writes [Agent Plugins 1.0](https://agent-plugins.org/) `plugin.json` and `mcp.json`, a compact runtime Agent Skill, catalog-derived TypeScript references, and a self-contained `dist/plugin` artifact. It attempts the initial reference sync automatically; run `npm run plugin:sync` again whenever the upstream catalog changes. Use `--no-sync` when credentials or connectivity will be configured later.
 
-Every scaffold also receives `.agents/skills/build-codemodekit-plugin`, a project-level development skill that teaches compatible coding agents how to maintain the server and plugin. Use `--no-authoring-skill` to omit it. The development skill is not included in the runtime plugin artifact.
+Every scaffold also receives two project-level development skills: `.agents/skills/build-codemodekit-server` builds and verifies the server, while `.agents/skills/author-codemode-skill` turns the generated runtime baseline into domain-aware workflows and maintains the Agent Plugin. Use `--no-authoring-skill` to omit both. Development skills are not included in the runtime plugin artifact.
+
+The generator obtains those files from `@codemodekit/skills`, which remains the programmatic and npm-packaged installer. The `npx skills add stjbrown/codemodekit` path above is the preferred way to add or update them in an existing project.
 
 The MCP command is parsed into an executable and argument array; the generator never starts a shell. The generated project uses the explicit `allow-all` tool policy for a working starting point. In the GitHub example, the upstream server is independently placed in read-only mode. Choose `--policy deny-all` when the CodeModeKit server should start closed while you define a narrower policy, and use `--no-install` to generate without running `npm install`.
 
@@ -68,6 +120,34 @@ await serveCodeModeStdio({
 });
 ```
 
+Application functions use the same provider-neutral surface without another MCP process:
+
+```ts
+import { z } from "zod";
+import {
+  allowAllToolCalls,
+  defineTool,
+  local,
+  serveCodeModeStdio,
+} from "codemodekit";
+
+const greet = defineTool({
+  description: "Greet someone",
+  inputSchema: z.object({ name: z.string() }),
+  outputSchema: z.object({ greeting: z.string() }),
+  execute: ({ name }) => ({ greeting: `Hello, ${name}!` }),
+});
+
+await serveCodeModeStdio({
+  name: "local-code-mode",
+  version: "0.1.0",
+  toolPolicy: allowAllToolCalls(),
+  sources: [local({ name: "app", tools: { greet } })],
+});
+```
+
+`defineTool` accepts plain JSON Schema or any schema library implementing Standard JSON Schema. Local tool functions receive validated input plus execution IDs and an `AbortSignal`, return plain JSON, and may throw `ToolError` when a bounded message is safe to expose to authored code.
+
 TypeScript compilation and QuickJS are the batteries-included runtime and stay out of the beginner API. Source helpers are available for `mcp.stdio`, `mcp.http` / `mcp.streamableHttp`, and `mcp.sse`. Limits, reconnect behavior, transport settings, search, and policy remain configurable. The facade defaults to a 120-second execution wall time, a 60-second upstream call timeout, 60-second MCP connect/discovery timeouts, and a 32 MiB stdio buffer; the lower-level packages retain their existing defaults.
 
 Add an observer when the host needs metrics, traces, or audit correlation:
@@ -111,10 +191,10 @@ HTTP binds to `127.0.0.1` at `/mcp` by default. A non-loopback bind must explici
 - `@codemodekit/core`: compiler, orchestration, normalized provider contracts, policy enforcement, schema validation, limits, diagnostics, and execution results.
 - `@codemodekit/mcp`: SDK-owned MCP clients, upstream transport configuration, tool discovery, model-visibility filtering, invocation, cancellation, and host-only MCP sideband.
 - `@codemodekit/sandbox-quickjs`: isolated QuickJS/WASM implementation with a pruned global surface and asynchronous host bridge.
-- `codemodekit`: batteries-included Code Mode construction plus stdio and Streamable HTTP hosts.
-- `create-codemodekit`: command-driven one-file project, Agent Plugin, authoring-skill, build, and Cursor-install tooling.
-- `packages/create-codemodekit/skills/build-codemodekit-plugin`: packaged authoring guidance installed into generated projects.
-- `tests/support/InMemoryTestToolProvider`: private deterministic provider fixture. It is not a supported local-tool provider.
+- `codemodekit`: batteries-included MCP and Local Tool sources plus stdio and Streamable HTTP hosts.
+- `@codemodekit/skills`: installable server-building and domain-aware runtime-skill authoring guidance for coding agents.
+- `create-codemodekit`: command-driven one-file project, Agent Plugin, skill installation, build, and Cursor-install tooling.
+- `tests/support/InMemoryTestToolProvider`: private deterministic provider fixture; applications should use the public `local()` source.
 
 ## Development
 
@@ -125,9 +205,10 @@ pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm test
 pnpm run test:package
+pnpm run test:skills
 ```
 
-The test suite runs the walking skeleton against both the release QuickJS build and its leak-detecting debug build. The package smoke test packs all five public packages, installs those tarballs in a clean project, scaffolds and bundles a plugin, then calls `run_typescript` through the resulting artifact.
+The test suite runs the walking skeleton against both the release QuickJS build and its leak-detecting debug build. The package smoke test packs all six public packages, installs those tarballs into clean projects, and calls `run_typescript` through portable MCP-backed and Local Tool weather plugins.
 
 ## Runnable stdio server
 
@@ -276,7 +357,7 @@ The loader reads only local root `plugin.json` and `mcp.json` files. It does not
 
 - Agent Plugin skill discovery and delivery by CodeModeKit itself. Generated plugins already package skills for compatible clients.
 - Complete v0.1 health and observability surfaces.
-- Public local-function and OpenAPI providers; these remain v2 work.
+- OpenAPI providers; these remain future work.
 
 See [the v0.1 plan](docs/plan/v0.1.md) and [architecture](docs/architecture/code-mode.md) for the accepted design.
 

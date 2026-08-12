@@ -1,0 +1,4 @@
+interface:
+  display_name: "Author Code Mode Skill"
+  short_description: "Author a domain-aware Code Mode skill"
+  default_prompt: "Use $author-codemode-skill to turn this CodeModeKit plugin into a polished domain-aware agent skill."

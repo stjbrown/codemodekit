@@ -1,7 +1,7 @@
 {
   "name": "create-codemodekit",
-  "version": "0.3.0",
-  "description": "Scaffold runnable CodeModeKit servers and portable Agent Plugins from MCP commands.",
+  "version": "0.4.0",
+  "description": "Scaffold runnable CodeModeKit servers, Local Tool starters, and portable Agent Plugins.",
   "author": "Stephen Brown",
   "license": "Apache-2.0",
   "repository": {
@@ -30,12 +30,13 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist/*.js", "dist/*.d.ts", "dist/*.map", "skills/**/*"],
+  "files": ["dist/*.js", "dist/*.d.ts", "dist/*.map"],
   "keywords": ["code-mode", "mcp", "model-context-protocol", "agent-plugin", "agent-skill", "scaffold"],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
+    "@codemodekit/skills": "workspace:*",
     "esbuild": "0.28.1"
   }
 }

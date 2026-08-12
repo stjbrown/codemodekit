@@ -34,4 +34,5 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm test
       - run: pnpm run test:package
+      - run: pnpm run test:skills
       - run: pnpm run release:publish

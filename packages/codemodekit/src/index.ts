@@ -17,6 +17,17 @@ export {
   type McpSseSourceOptions,
   type McpStdioSourceOptions,
 } from "./sources.js";
+export {
+  defineTool,
+  local,
+  LocalToolProvider,
+  ToolError,
+  type LocalToolDefinition,
+  type LocalToolExecutionContext,
+  type LocalToolInputSchema,
+  type LocalToolOutputSchema,
+  type LocalToolSourceOptions,
+} from "./local.js";
 
 export { allowAllToolCalls, denyAllToolCalls } from "@codemodekit/core";
 export type {

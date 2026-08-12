@@ -29,7 +29,7 @@ Each projection is separately configured, named, authorized, negotiated, and tes
 
 Specific rules follow:
 
-- A consumer-owned tool registered directly as an MCP App can render a View. Calling the same service through a future `LocalToolProvider` inside `run_typescript` is computation-only.
+- A consumer-owned tool registered directly as an MCP App can render a View. Calling the same service through `LocalToolProvider` inside `run_typescript` is computation-only.
 - A future Tasks adapter may make the outer `run_typescript` call task-capable. That task represents the whole code execution. A task used by a nested upstream provider call is managed internally and is not surfaced as the downstream execution's task handle.
 - Canonical skill content remains independent of the core. Agent Plugins package it today; a future MCP Skills adapter may expose it once the protocol is stable.
 - Unsupported upstream extension data remains preserved as protocol sideband according to ADR 0008, without implying passthrough.

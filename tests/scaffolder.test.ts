@@ -8,6 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -20,11 +21,13 @@ import {
   getCursorPluginStatus,
   installCursorPlugin,
   parseMcpCommand,
+  runCli,
   scaffoldAgentPlugin,
   scaffoldCodeModeMcp,
   syncAgentPluginSkill,
   uninstallCursorPlugin,
 } from "create-codemodekit";
+import type { CliPrompter } from "create-codemodekit";
 import { afterEach, describe, expect, it } from "vitest";
 
 const workspaceRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -34,10 +37,19 @@ const fixturePath = fileURLToPath(
 const execFileAsync = promisify(execFile);
 const codemodekitPackageRoot = path.join(workspaceRoot, "packages", "codemodekit");
 const clients: Client[] = [];
+const httpServers: Server[] = [];
 const tempDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.allSettled(clients.splice(0).map((client) => client.close()));
+  await Promise.allSettled(
+    httpServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error === undefined ? resolve() : reject(error)));
+        }),
+    ),
+  );
   await Promise.all(
     tempDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
@@ -87,6 +99,167 @@ describe("create-codemodekit", () => {
     expect(source).toContain('command: "uvx"');
     expect(source).toContain('args: ["zscaler-mcp"]');
     expect(source).not.toMatch(/TypeScriptCompiler|QuickJsSandbox/);
+  });
+
+  it("scaffolds the editable weather starter with Local Tools and an Agent Plugin", async () => {
+    const directory = await mkdtemp(path.join(workspaceRoot, ".scaffold-weather-"));
+    tempDirectories.push(directory);
+
+    const result = await scaffoldCodeModeMcp({
+      targetDirectory: directory,
+      source: { type: "weather" },
+      agentPlugin: true,
+      install: false,
+    });
+
+    const source = await readFile(result.entrypoint, "utf8");
+    expect(source).toContain("defineTool");
+    expect(source).toContain("local({");
+    expect(source).toContain("findLocation");
+    expect(source).toContain("getCurrentWeather");
+    expect(source).toContain("geocoding-api.open-meteo.com");
+    expect(source).not.toContain("mcp.stdio");
+    expect(await readFile(path.join(directory, ".env.example"), "utf8")).toContain(
+      "OPEN_METEO_FORECAST_URL",
+    );
+    expect(await readFile(path.join(directory, "README.md"), "utf8")).toContain(
+      "editable, keyless weather starter",
+    );
+    expect(result.agentPlugin).toMatchObject({
+      skillName: "use-weather-codemode",
+      synced: false,
+    });
+
+    await execFileAsync(process.execPath, [result.entrypoint, "--sync-plugin"], {
+      cwd: directory,
+      timeout: 10_000,
+    });
+    const tools = await readFile(
+      path.join(
+        directory,
+        "skills",
+        "use-weather-codemode",
+        "references",
+        "tools.d.ts",
+      ),
+      "utf8",
+    );
+    expect(tools).toContain("readonly findLocation");
+    expect(tools).toContain("readonly getCurrentWeather");
+  });
+
+  it("runs the generated weather composition against overridable endpoints", async () => {
+    const requests: string[] = [];
+    const api = createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.setHeader("content-type", "application/json");
+      if (request.url?.startsWith("/search") === true) {
+        response.end(
+          JSON.stringify({
+            results: [
+              {
+                name: "Raleigh",
+                country: "United States",
+                latitude: 35.7796,
+                longitude: -78.6382,
+                timezone: "America/New_York",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          current: {
+            time: "2026-08-12T07:00",
+            temperature_2m: 24.5,
+            apparent_temperature: 25.1,
+            relative_humidity_2m: 70,
+            precipitation: 0,
+            weather_code: 1,
+            wind_speed_10m: 8.2,
+          },
+          current_units: {
+            temperature_2m: "°C",
+            precipitation: "mm",
+            wind_speed_10m: "km/h",
+          },
+        }),
+      );
+    });
+    httpServers.push(api);
+    const baseUrl = await listen(api);
+    const directory = await mkdtemp(
+      path.join(workspaceRoot, ".scaffold-weather-e2e-"),
+    );
+    tempDirectories.push(directory);
+    const result = await scaffoldCodeModeMcp({
+      targetDirectory: directory,
+      source: { type: "weather" },
+      install: false,
+    });
+    const client = await connectToServer(
+      result.entrypoint,
+      directory,
+      {
+        OPEN_METEO_GEOCODING_URL: `${baseUrl}/search`,
+        OPEN_METEO_FORECAST_URL: `${baseUrl}/forecast`,
+      },
+    );
+
+    const execution = await client.callTool({
+      name: "run_typescript",
+      arguments: {
+        code: `
+          const location = await tools.weather.findLocation({ query: "Raleigh" });
+          const current = await tools.weather.getCurrentWeather({
+            latitude: location.structuredContent.latitude,
+            longitude: location.structuredContent.longitude,
+          });
+          return {
+            location: location.structuredContent.name,
+            temperature: current.structuredContent.temperature,
+            condition: current.structuredContent.condition,
+          };
+        `,
+      },
+    });
+    expect(execution).toMatchObject({
+      structuredContent: {
+        ok: true,
+        value: { location: "Raleigh", temperature: 24.5, condition: "partly cloudy" },
+      },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toContain("name=Raleigh");
+    expect(requests[1]).toContain("latitude=35.7796");
+  });
+
+  it("offers weather as the default interactive starter", async () => {
+    const directory = path.join(
+      await mkdtemp(path.join(workspaceRoot, ".scaffold-interactive-")),
+      "weather-project",
+    );
+    tempDirectories.push(path.dirname(directory));
+    const writes: string[] = [];
+    const prompter: CliPrompter = {
+      input: async (message, defaultValue) =>
+        message === "Project directory" ? directory : (defaultValue ?? ""),
+      select: async (_message, _choices, defaultValue) => defaultValue,
+      confirm: async (_message, defaultValue) => defaultValue,
+    };
+
+    await runCli(["--no-install", "--no-sync"], {
+      prompter,
+      write: (value) => writes.push(value),
+    });
+
+    expect(await readFile(path.join(directory, "src", "server.mjs"), "utf8")).toContain(
+      "getCurrentWeather",
+    );
+    expect(await lstat(path.join(directory, "plugin.json"))).toBeDefined();
+    expect(writes.join("\n")).toContain("Agent Plugin: scaffolded");
   });
 
   it("installs dependencies by default for programmatic callers", async () => {
@@ -152,15 +325,25 @@ describe("create-codemodekit", () => {
       skillName: "use-fixture-codemode",
       synced: false,
     });
+    expect(result.authoringSkillDirectories).toEqual([
+      path.join(directory, ".agents", "skills", "build-codemodekit-server"),
+      path.join(directory, ".agents", "skills", "author-codemode-skill"),
+    ]);
     expect(result.authoringSkillDirectory).toBe(
-      path.join(directory, ".agents", "skills", "build-codemodekit-plugin"),
+      result.authoringSkillDirectories?.[0],
     );
     expect(
       await readFile(
-        path.join(result.authoringSkillDirectory ?? "", "SKILL.md"),
+        path.join(result.authoringSkillDirectories?.[0] ?? "", "SKILL.md"),
         "utf8",
       ),
-    ).toContain("# Build a CodeModeKit Plugin");
+    ).toContain("# Build a CodeModeKit Server");
+    expect(
+      await readFile(
+        path.join(result.authoringSkillDirectories?.[1] ?? "", "SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("# Author a Code Mode Skill");
     expect(JSON.parse(await readFile(path.join(directory, "plugin.json"), "utf8"))).toMatchObject({
       $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
       name: expect.stringMatching(/^scaffold-plugin-/),
@@ -452,7 +635,11 @@ async function generatedPluginProject(label: string): Promise<string> {
   return directory;
 }
 
-async function connectToServer(server: string, cwd: string): Promise<Client> {
+async function connectToServer(
+  server: string,
+  cwd: string,
+  environment: Readonly<Record<string, string>> = {},
+): Promise<Client> {
   const client = new Client(
     { name: "plugin-distribution-client", version: "1.0.0" },
     {
@@ -469,12 +656,27 @@ async function connectToServer(server: string, cwd: string): Promise<Client> {
       command: process.execPath,
       args: [server],
       cwd,
-      env: { PATH: process.env.PATH ?? "" },
+      env: { PATH: process.env.PATH ?? "", ...environment },
       stderr: "pipe",
     }),
     { timeout: 10_000 },
   );
   return client;
+}
+
+async function listen(server: Server): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Weather fixture did not bind a TCP port");
+  }
+  return `http://127.0.0.1:${String(address.port)}`;
 }
 
 async function expectPathMissing(file: string): Promise<void> {

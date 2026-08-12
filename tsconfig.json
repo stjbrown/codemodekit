@@ -5,6 +5,7 @@
     { "path": "./packages/sandbox-quickjs" },
     { "path": "./packages/mcp" },
     { "path": "./packages/codemodekit" },
+    { "path": "./packages/skills" },
     { "path": "./packages/create-codemodekit" },
     { "path": "./examples" }
   ]

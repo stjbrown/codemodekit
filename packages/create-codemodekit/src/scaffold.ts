@@ -8,12 +8,20 @@ import {
   scaffoldAgentPlugin,
   type ScaffoldAgentPluginResult,
 } from "./agent-plugin.js";
-import { installProjectAuthoringSkill } from "./authoring-skill.js";
+import { installProjectAuthoringSkills } from "./authoring-skill.js";
 import type { ParsedCommand } from "./command.js";
+import {
+  renderEnvExample,
+  renderSource,
+  renderSourceReadme,
+  type ScaffoldSource,
+} from "./source-template.js";
+
+export type { ScaffoldSource } from "./source-template.js";
 
 const PACKAGE_VERSION = readPackageVersion();
 // The generator and batteries-included runtime release independently.
-const DEFAULT_CODEMODEKIT_VERSION = "^0.2.0";
+const DEFAULT_CODEMODEKIT_VERSION = "^0.3.0";
 const DEFAULT_CREATE_CODEMODEKIT_VERSION = `^${PACKAGE_VERSION}`;
 
 export interface AgentPluginScaffoldOptions {
@@ -27,14 +35,18 @@ export interface AgentPluginScaffoldOptions {
 
 export interface ScaffoldCodeModeMcpOptions {
   readonly targetDirectory: string;
-  readonly mcpName: string;
-  readonly mcpCommand: ParsedCommand;
+  /** Tool source to wrap. Prefer this over the legacy mcpName/mcpCommand pair. */
+  readonly source?: ScaffoldSource;
+  /** @deprecated Use source: { type: "mcp-stdio", ... }. */
+  readonly mcpName?: string;
+  /** @deprecated Use source: { type: "mcp-stdio", ... }. */
+  readonly mcpCommand?: ParsedCommand;
   readonly serverName?: string;
   readonly packageName?: string;
   readonly policy?: "allow-all" | "deny-all";
   /** Generate a portable Agent Plugins 1.0 package and companion skill. */
   readonly agentPlugin?: boolean | AgentPluginScaffoldOptions;
-  /** Install project-local authoring guidance under .agents/skills. Defaults to true. */
+  /** Install both project-local authoring skills under .agents/skills. Defaults to true. */
   readonly authoringSkill?: boolean;
   readonly install?: boolean;
   /** Override the generated runtime dependency, including with a file: specifier. */
@@ -55,7 +67,9 @@ export interface ScaffoldResult {
   readonly directory: string;
   readonly entrypoint: string;
   readonly installed: boolean;
+  /** First installed authoring skill retained for compatibility. */
   readonly authoringSkillDirectory?: string;
+  readonly authoringSkillDirectories?: readonly string[];
   readonly agentPlugin?: GeneratedAgentPluginResult;
 }
 
@@ -64,9 +78,10 @@ export async function scaffoldCodeModeMcp(
 ): Promise<ScaffoldResult> {
   const cwd = options.cwd ?? process.cwd();
   const directory = path.resolve(cwd, options.targetDirectory);
-  const mcpName = required(options.mcpName, "MCP name");
+  const source = resolveSource(options);
+  const sourceName = source.type === "weather" ? "weather" : source.name;
   const serverName = required(
-    options.serverName ?? `${mcpName}-code-mode`,
+    options.serverName ?? `${sourceName}-code-mode`,
     "Server name",
   );
   const packageName = validPackageName(
@@ -87,7 +102,7 @@ export async function scaffoldCodeModeMcp(
     agentPluginOptions === undefined
       ? undefined
       : normalizePortableName(
-          agentPluginOptions.skillName ?? `use-${mcpName}-codemode`,
+          agentPluginOptions.skillName ?? `use-${sourceName}-codemode`,
           "Skill name",
         );
   const codemodekitVersion = required(
@@ -143,12 +158,16 @@ export async function scaffoldCodeModeMcp(
       "utf8",
     ),
     writeFile(
+      path.join(directory, ".env.example"),
+      renderEnvExample(source),
+      "utf8",
+    ),
+    writeFile(
       path.join(directory, "README.md"),
       renderProjectReadme({
         packageName,
         serverName,
-        mcpName,
-        mcpCommand: options.mcpCommand,
+        source,
         policy,
         agentPlugin: agentPluginOptions !== undefined,
         authoringSkill: includeAuthoringSkill,
@@ -159,8 +178,7 @@ export async function scaffoldCodeModeMcp(
       entrypoint,
       renderServer({
         serverName,
-        mcpName,
-        mcpCommand: options.mcpCommand,
+        source,
         policy,
         ...(skillName === undefined
           ? {}
@@ -170,9 +188,16 @@ export async function scaffoldCodeModeMcp(
     ),
   ]);
 
-  const authoringSkillDirectory = includeAuthoringSkill
-    ? await installProjectAuthoringSkill({ root: directory })
+  const authoringSkills = includeAuthoringSkill
+    ? await installProjectAuthoringSkills({ root: directory })
     : undefined;
+  const authoringSkillDirectories =
+    authoringSkills === undefined
+      ? undefined
+      : Object.values(authoringSkills.directories).filter(
+          (value): value is string => value !== undefined,
+        );
+  const authoringSkillDirectory = authoringSkillDirectories?.[0];
 
   let generatedPlugin: ScaffoldAgentPluginResult | undefined;
   if (
@@ -227,6 +252,9 @@ export async function scaffoldCodeModeMcp(
     ...(authoringSkillDirectory === undefined
       ? {}
       : { authoringSkillDirectory }),
+    ...(authoringSkillDirectories === undefined
+      ? {}
+      : { authoringSkillDirectories }),
     ...(generatedPlugin === undefined
       ? {}
       : {
@@ -243,8 +271,7 @@ export async function scaffoldCodeModeMcp(
 
 interface RenderServerOptions {
   readonly serverName: string;
-  readonly mcpName: string;
-  readonly mcpCommand: ParsedCommand;
+  readonly source: ScaffoldSource;
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin?: {
     readonly skillName: string;
@@ -254,8 +281,7 @@ interface RenderServerOptions {
 interface RenderProjectReadmeOptions {
   readonly packageName: string;
   readonly serverName: string;
-  readonly mcpName: string;
-  readonly mcpCommand: ParsedCommand;
+  readonly source: ScaffoldSource;
   readonly policy: "allow-all" | "deny-all";
   readonly agentPlugin: boolean;
   readonly authoringSkill: boolean;
@@ -288,9 +314,12 @@ Run \`npm run plugin:status:cursor\` to inspect it and \`npm run plugin:uninstal
     ? `
 ## Development guidance
 
-The project-local \`.agents/skills/build-codemodekit-plugin\` skill gives compatible coding agents the CodeModeKit authoring and maintenance workflow.
+The project-local \`.agents/skills/build-codemodekit-server\` and \`.agents/skills/author-codemode-skill\` skills let compatible coding agents build the server, then author domain-aware runtime guidance and maintain its Agent Plugin.
+
+After the catalog is synchronized, ask the coding agent to use \`$author-codemode-skill\` before distributing the generated runtime skill.
 `
     : "";
+  const sourceSection = renderSourceReadme(options.source);
   return `# ${options.packageName}
 
 Code Mode MCP server generated by [CodeModeKit](https://github.com/stjbrown/codemodekit).
@@ -301,11 +330,9 @@ Code Mode MCP server generated by [CodeModeKit](https://github.com/stjbrown/code
 npm start
 \`\`\`
 
-The downstream server is \`${options.serverName}\`. It wraps the \`${options.mcpName}\` source using this shell-free process configuration:
+The downstream server is \`${options.serverName}\`.
 
-\`\`\`json
-${JSON.stringify(options.mcpCommand, null, 2)}
-\`\`\`
+${sourceSection}
 
 The generated tool policy is \`${options.policy}\`. Review \`src/server.mjs\` before exposing the server, and keep credentials in uncommitted environment files or the upstream tool's supported secret mechanism.
 ${pluginSection}${authoringSection}
@@ -315,68 +342,44 @@ ${pluginSection}${authoringSection}
 export function renderServer(options: RenderServerOptions): string {
   const policyFactory =
     options.policy === "allow-all" ? "allowAllToolCalls" : "denyAllToolCalls";
-  if (options.agentPlugin !== undefined) {
-    return renderAgentPluginServer(options, policyFactory);
-  }
-  return `import {
-  ${policyFactory},
-  mcp,
-  serveCodeModeStdio,
-} from "codemodekit";
-
-await serveCodeModeStdio({
+  const source = renderSource(options.source);
+  const plugin = options.agentPlugin;
+  const nodeImport =
+    plugin === undefined ? "" : 'import { fileURLToPath } from "node:url";\n\n';
+  const imports = [
+    policyFactory,
+    ...(plugin === undefined ? [] : ["createCodeModeMcp"]),
+    ...source.imports,
+    "serveCodeModeStdio",
+  ].sort();
+  const application = `const options = {
   name: ${JSON.stringify(options.serverName)},
   version: "0.1.0",
   toolPolicy: ${policyFactory}(),
-  sources: [
-    mcp.stdio({
-      name: ${JSON.stringify(options.mcpName)},
-      command: ${JSON.stringify(options.mcpCommand.command)},
-      args: ${JSON.stringify(options.mcpCommand.args)},
-    }),
-  ],
-});
+  sources: [${source.expression}],
+};
 `;
+  const launch =
+    plugin === undefined
+      ? "await serveCodeModeStdio(options);\n"
+      : renderAgentPluginLaunch(plugin.skillName, options.serverName);
+  return `${nodeImport}import {
+${imports.map((name) => `  ${name},`).join("\n")}
+} from "codemodekit";
+
+${source.prelude}${application}
+${launch}`;
 }
 
-function renderAgentPluginServer(
-  options: RenderServerOptions,
-  policyFactory: "allowAllToolCalls" | "denyAllToolCalls",
-): string {
-  const skillName = options.agentPlugin?.skillName;
-  if (skillName === undefined) {
-    throw new TypeError("Agent Plugin skill name is required");
-  }
-  return `import { fileURLToPath } from "node:url";
-
-import {
-  ${policyFactory},
-  createCodeModeMcp,
-  mcp,
-  serveCodeModeStdio,
-} from "codemodekit";
-
-const options = {
-  name: ${JSON.stringify(options.serverName)},
-  version: "0.1.0",
-  toolPolicy: ${policyFactory}(),
-  sources: [
-    mcp.stdio({
-      name: ${JSON.stringify(options.mcpName)},
-      command: ${JSON.stringify(options.mcpCommand.command)},
-      args: ${JSON.stringify(options.mcpCommand.args)},
-    }),
-  ],
-};
-
-if (process.argv.includes("--sync-plugin")) {
+function renderAgentPluginLaunch(skillName: string, serverName: string): string {
+  return `if (process.argv.includes("--sync-plugin")) {
   const { syncAgentPluginSkill } = await import("create-codemodekit");
   const application = createCodeModeMcp(options);
   try {
     const result = await syncAgentPluginSkill({
       root: fileURLToPath(new URL("../", import.meta.url)),
       skillName: ${JSON.stringify(skillName)},
-      serverName: ${JSON.stringify(options.serverName)},
+      serverName: ${JSON.stringify(serverName)},
       codeMode: application.codeMode,
     });
     process.stdout.write(
@@ -389,6 +392,62 @@ if (process.argv.includes("--sync-plugin")) {
   await serveCodeModeStdio(options);
 }
 `;
+}
+
+function resolveSource(options: ScaffoldCodeModeMcpOptions): ScaffoldSource {
+  if (
+    options.source !== undefined &&
+    (options.mcpName !== undefined || options.mcpCommand !== undefined)
+  ) {
+    throw new TypeError("Use either source or mcpName/mcpCommand, not both");
+  }
+  if (options.source !== undefined) {
+    switch (options.source.type) {
+      case "weather":
+        return options.source;
+      case "mcp-stdio":
+        return {
+          type: "mcp-stdio",
+          name: required(options.source.name, "MCP name"),
+          command: validateCommand(options.source.command),
+        };
+      case "mcp-http":
+        return {
+          type: "mcp-http",
+          name: required(options.source.name, "MCP name"),
+          url: validateHttpUrl(options.source.url),
+        };
+    }
+  }
+  if (options.mcpName === undefined || options.mcpCommand === undefined) {
+    throw new TypeError("A source or mcpName/mcpCommand pair is required");
+  }
+  return {
+    type: "mcp-stdio",
+    name: required(options.mcpName, "MCP name"),
+    command: validateCommand(options.mcpCommand),
+  };
+}
+
+function validateCommand(command: ParsedCommand): ParsedCommand {
+  return {
+    command: required(command.command, "MCP command"),
+    args: command.args.map((argument) => String(argument)),
+  };
+}
+
+function validateHttpUrl(value: string): string {
+  const candidate = required(value, "MCP URL");
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new TypeError(`Invalid MCP URL: ${candidate}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new TypeError("MCP URL must use http or https");
+  }
+  return url.toString();
 }
 
 async function ensureEmptyDirectory(directory: string): Promise<void> {

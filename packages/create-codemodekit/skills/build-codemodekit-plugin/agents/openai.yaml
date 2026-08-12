@@ -1,4 +1,0 @@
-interface:
-  display_name: "Build CodeModeKit Plugin"
-  short_description: "Scaffold and maintain CodeModeKit Agent Plugins"
-  default_prompt: "Build or update a portable CodeModeKit Agent Plugin with a companion runtime skill."

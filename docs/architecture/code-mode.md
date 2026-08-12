@@ -1,12 +1,12 @@
 # CodeModeKit Architecture
 
-**Status:** Working architecture; core decisions locked for the initial implementation  
-**Date:** 2026-08-09  
+**Status:** Living architecture
+**Date:** 2026-08-12
 **Scope:** TypeScript SDK for exposing large tool catalogs to agents through sandboxed code without placing every tool declaration in model context
 
 ## Purpose
 
-This document captures the architecture developed during the research phase. It is intended to become the initial design brief for a future project repository.
+This document captures the architecture implemented by CodeModeKit and the constraints that future providers and sandboxes must preserve.
 
 The central idea is to give an agent one small Code Mode surface. The agent writes TypeScript that calls a namespaced `tools` API, and that code runs in a portable sandbox. Tool documentation is disclosed progressively through Agent Skills instead of loading the entire catalog into the prompt.
 
@@ -27,10 +27,10 @@ This is not intended to be a general integration-management platform. It is a fo
 | Isolation boundary | `CodeSandbox` |
 | Sandbox-to-tool boundary | `ToolBridge` |
 | Tool source abstraction | `ToolProvider` |
-| Initial provider | Multiple `McpToolProvider` instances in one catalog |
+| Implemented providers | Multiple `McpToolProvider` and `LocalToolProvider` instances in one catalog |
 | v0.1 provider proof | Private in-memory conformance provider plus one mixed-provider execution test |
-| Provider API stability | Internal or explicitly experimental in v0.1; stabilize after real heterogeneous v2 implementations |
-| Planned v2 providers | `LocalToolProvider` and `OpenApiToolProvider` alongside MCP sources |
+| Provider API stability | `local`, `defineTool`, and `LocalToolProvider` are public; the lower-level custom-provider seam remains expert-facing during `0.x` |
+| Planned provider | `OpenApiToolProvider` alongside MCP and local-function sources |
 | Tool API | Namespaced calls such as `tools.github.searchIssues(...)` |
 | Initial sandbox | QuickJS/WASM |
 | Additional sandboxes | Adapters later; do not couple the core to one runtime |
@@ -63,6 +63,28 @@ await serveCodeModeStdio({
       command: "deployment-mcp",
     }),
   ],
+});
+```
+
+Application-owned functions use the same catalog and sandbox bridge without becoming a second MCP server:
+
+```ts
+const lookup = defineTool({
+  description: "Look up a record",
+  inputSchema: {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+    additionalProperties: false,
+  },
+  execute: async ({ id }) => ({ id }),
+});
+
+await serveCodeModeStdio({
+  name: "application-code-mode",
+  version: "0.3.0",
+  toolPolicy: allowAllToolCalls(),
+  sources: [local({ name: "application", tools: { lookup } })],
 });
 ```
 
@@ -108,7 +130,7 @@ registerConsumerTools(server);
 registerConsumerApps(server);
 ```
 
-These registrations may share underlying application services, but each projection owns its protocol contract. For example, a consumer-owned tool can be both available through a future `LocalToolProvider` and registered directly as an MCP App. The direct MCP tool can render its View; a nested call to the same capability through `run_typescript` remains a computation-only call.
+These registrations may share underlying application services, but each projection owns its protocol contract. For example, a consumer-owned tool can be both available through `LocalToolProvider` and registered directly as an MCP App. The direct MCP tool can render its View; a nested call to the same capability through `run_typescript` remains a computation-only call.
 
 The preferred model-facing surface is deliberately small:
 
@@ -117,7 +139,7 @@ The preferred model-facing surface is deliberately small:
 
 `run_typescript` accepts a `code` string that is compiled as the body of an SDK-generated async entry function. Model-authored code can use top-level `await` and an explicit `return`; reaching the end produces `undefined`, and the final expression is not implicitly returned.
 
-The exact API signatures remain implementation details until the first prototype, but the component boundaries and responsibilities are fixed. Local and OpenAPI providers join the same catalog in v2.
+MCP and local providers already join the same catalog. OpenAPI remains a planned provider behind the same boundary.
 
 `CodeMode.run` resolves expected execution outcomes through a discriminated success/failure union. Compiler failures, sandbox failures, and uncaught tool failures are model-visible results rather than opaque thrown exceptions. The MCP adapter includes both a concise textual diagnostic and the bounded structured failure so an LLM can revise and retry its code.
 
@@ -252,12 +274,14 @@ The name is intentionally concrete: whether a capability originates as a local f
 
 Provider sequence:
 
-- v0.1 production: `McpToolProvider` discovers and invokes tools from another MCP server. Multiple instances compose into one catalog.
-- v0.1 conformance only: a private deterministic in-memory provider proves the core does not depend on MCP types or transport behavior. It is not exported or presented as local-tool support.
-- v2: `LocalToolProvider` wraps functions registered directly by the embedding application.
-- v2: `OpenApiToolProvider` converts OpenAPI operations into normalized tools and performs HTTP invocation.
+- `McpToolProvider` discovers and invokes tools from another MCP server. Multiple instances compose into one catalog.
+- `LocalToolProvider` wraps trusted host-side functions registered directly by the embedding application. `defineTool` preserves schema-derived types and `local` provides the concise source factory.
+- A private deterministic in-memory provider remains test infrastructure for edge-case conformance.
+- `OpenApiToolProvider` is planned to convert OpenAPI operations into normalized tools and perform HTTP invocation.
 
-The v0.1 provider seam is internal or explicitly experimental rather than a stable custom-extension contract. A shared conformance suite runs against MCP and in-memory implementations, and one end-to-end execution mixes them in a single catalog. v2 uses the real local and OpenAPI implementations to supply the evidence needed before stabilizing the public provider API. See ADR 0018.
+The public local-tool surface is intentionally narrower than the underlying provider contract. A shared conformance suite runs against MCP, local, and in-memory implementations, and end-to-end execution tests mix provider kinds in a single catalog. See ADRs 0018 and 0019.
+
+Local tool functions execute on the trusted host, not inside QuickJS. Their inputs have already crossed the sandbox bridge and are validated against the normalized schema; their JSON outputs cross the same result validation, size, policy, cancellation, and diagnostic boundaries as MCP results. A local function does not gain access to model-authored code or sandbox globals.
 
 Provider-specific authentication, connection management, and protocol behavior stay behind the provider boundary. `CodeSandbox` never handles credentials.
 
@@ -345,8 +369,8 @@ This is an explicit multi-projection model: an application capability may be exp
 The design must not emit every tool declaration into model instructions. Large catalogs make that approach expensive and eventually unusable.
 
 An Agent Plugin contains the Code Mode MCP server and focused skills. The
-CodeModeKit generator creates a companion runtime skill and snapshots the
-active normalized catalog into its references:
+CodeModeKit generator creates a mechanical companion-skill baseline and
+snapshots the active normalized catalog into its references:
 
 ```text
 plugin.json
@@ -376,6 +400,8 @@ When a skill is activated, the agent receives:
 
 Because a skill can document exact calls, it can often invoke `run_typescript` directly. `search_tools` remains available by default for incomplete documentation, unfamiliar capabilities, dynamic catalogs, or recovery from a missing tool. Consumers with complete, maintained skills can disable it explicitly.
 
+Catalog generation and semantic authorship are separate. CodeModeKit owns `tools.d.ts`, catalog metadata, and portable artifact construction. A coding agent using `@codemodekit/skills` owns the runtime skill's domain triggers, user jobs, safety decisions, workflows, and worked compositions. Generated catalog refresh must not overwrite those authored files. The `build-codemodekit-server` development skill creates and verifies the execution surface; `author-codemode-skill` then inspects repository evidence and the live catalog, asks only for consequential missing intent, and maintains the runtime skill and Agent Plugin metadata. See ADR 0020.
+
 `search_tools` searches only the current active, model-visible catalog. It performs deterministic local lexical ranking over configured source names, exact tool names and addresses, descriptions, and schema property names. It never uses embeddings, external search, app-only tools, or quarantined tools.
 
 Its input supports a required bounded query, an optional exact source filter, `detail: "summary" | "typescript"`, and a bounded result limit. Summary mode returns compact identity and description data. TypeScript mode also returns the exact callable expression, conservative input/output declarations, and one shared `resultContract` that defines `ToolResult`, explains `structuredContent` and rich-content fallback handling, and shows guarded JSON-text extraction. The response carries an opaque catalog revision so diagnostics can identify stale discovery. There is no separate `describe_tool` in v0.1. See ADR 0015.
@@ -386,7 +412,7 @@ Its input supports a required bounded query, an optional exact source filter, `d
 
 Agent Plugins are the canonical packaging and discovery mechanism. `SKILL.md` files and their generated references are the single source of truth.
 
-Agent Plugins are also a supported source of upstream MCP configuration. The consumer installs a plugin and supplies its local root path; the SDK loads `mcp.json` and maps its server entries into managed MCP clients. Plugin discovery, download, installation, and updates are outside the SDK. CodeModeKit can scaffold a portable plugin and its skill, but it does not itself discover or deliver that skill at runtime; compatible Agent Plugin clients do. The plugin boundary must therefore be retained rather than flattening `mcp.json` into anonymous configuration too early.
+Agent Plugins are also a supported source of upstream MCP configuration. The consumer installs a plugin and supplies its local root path; the SDK loads `mcp.json` and maps its server entries into managed MCP clients. Plugin discovery, download, installation, and updates are outside the SDK. CodeModeKit can scaffold a portable plugin and its skill, but it does not itself discover or deliver that skill at runtime; compatible Agent Plugin clients do. The plugin boundary must therefore be retained rather than flattening `mcp.json` into anonymous configuration too early. Project-level development skills are installed under `.agents/skills` and deliberately excluded from the runtime plugin artifact.
 
 ### Future MCP delivery
 

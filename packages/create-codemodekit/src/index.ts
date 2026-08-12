@@ -1,6 +1,13 @@
 export { parseMcpCommand, type ParsedCommand } from "./command.js";
 export {
+  runCli,
+  type CliPrompter,
+  type RunCliOptions,
+} from "./cli.js";
+export {
   installProjectAuthoringSkill,
+  installProjectAuthoringSkills,
+  type InstallCodeModeKitSkillsResult,
   type InstallProjectAuthoringSkillOptions,
 } from "./authoring-skill.js";
 export {
@@ -24,6 +31,7 @@ export {
   type GeneratedAgentPluginResult,
   type ScaffoldCodeModeMcpOptions,
   type ScaffoldResult,
+  type ScaffoldSource,
 } from "./scaffold.js";
 export {
   buildAgentPlugin,

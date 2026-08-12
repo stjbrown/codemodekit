@@ -44,7 +44,7 @@ The downstream MCP adapter receives the final `CodeMode.run` result. It does not
 - `run_typescript` metadata tells models to keep calls, extraction, and transformation inside one sandbox execution instead of spilling raw results into host files or commands.
 - Protocol extension data remains available for trusted diagnostics and future projection without entering the sandbox.
 - Tool execution errors support model-authored recovery with `try`/`catch` and actionable uncaught diagnostics.
-- Local and OpenAPI providers added in v2 must map results into the same computation shape or explicitly document a compatible adapter helper.
+- Local providers and a future OpenAPI provider must map results into the same computation shape or explicitly document a compatible adapter helper.
 
 ## Alternatives considered
 

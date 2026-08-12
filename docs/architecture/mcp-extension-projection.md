@@ -56,7 +56,7 @@ v0.1 retains opaque extension data and provenance but documents that `run_typesc
 
 A later adapter can add projection without changing provider or sandbox contracts. Until then, retaining extension data is a compatibility property, not a promise that the extension functions through the Code Mode server.
 
-This decision does not prohibit MCP Apps on the same downstream server. Consumer-owned tools can be registered directly as Apps because the consumer controls their tool definitions, resources, app-only calls, and lifecycle. If the same underlying capability is also exposed through a future `LocalToolProvider`, only its direct MCP registration renders the App; a nested sandbox invocation remains computation-only.
+This decision does not prohibit MCP Apps on the same downstream server. Consumer-owned tools can be registered directly as Apps because the consumer controls their tool definitions, resources, app-only calls, and lifecycle. If the same underlying capability is also exposed through `LocalToolProvider`, only its direct MCP registration renders the App; a nested sandbox invocation remains computation-only.
 
 ## Later projection shapes
 

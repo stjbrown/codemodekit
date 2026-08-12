@@ -14,6 +14,7 @@ const packageDirectories = [
   "mcp",
   "sandbox-quickjs",
   "codemodekit",
+  "skills",
   "create-codemodekit",
 ];
 

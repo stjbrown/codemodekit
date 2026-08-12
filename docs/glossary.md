@@ -1,7 +1,7 @@
 # CodeModeKit Glossary
 
 **Status:** Living document  
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-12
 
 | Term | Working definition |
 |---|---|
@@ -13,7 +13,10 @@
 | Guaranteed MCP matrix | The protocol revisions and transport paths exercised as contractual v0.1 compatibility: modern `2026-07-28`, legacy `2025-11-25`, stdio, Streamable HTTP, and the legacy SSE upstream-client path. Older behavior inherited from the pinned SDK is best effort. |
 | Exact-pinned MCP SDK | The single prerelease version of the official split TypeScript SDK packages used and tested by a Code Mode release. It is upgraded only through an intentional SDK change. |
 | Direct MCP configuration | Consumer-supplied TypeScript configuration for an upstream server, independent of an Agent Plugin package. |
-| Agent Plugin | A portable package containing `plugin.json` and optional `mcp.json` and `skills/` components under the Agent Plugins specification. In v0.1 the consumer installs it and supplies its local root path to configure upstream MCP servers; its skills are reserved for future discovery. |
+| Agent Plugin | A portable package containing `plugin.json` and optional `mcp.json` and `skills/` components under the Agent Plugins specification. Compatible clients discover its runtime skills and MCP servers; CodeModeKit can also load its upstream MCP configuration directly. |
+| Development skill | A project-level Agent Skill under `.agents/skills` that guides a coding agent while building CodeModeKit. It is not copied into the portable runtime plugin. |
+| Runtime skill | A domain-aware Agent Skill under a plugin's `skills/` directory that teaches an end-user agent when and how to use the packaged Code Mode MCP server. |
+| Mechanical skill baseline | The generator-owned initial runtime skill containing Code Mode execution mechanics and generated catalog references but no claim to understand the integration's users or domain workflows. |
 | Plugin MCP server key | A member name in an Agent Plugin's `mcpServers` object. It identifies a configured server but is not guaranteed to be a TypeScript identifier. |
 | Downstream MCP surface | The small set of tools exposed by the Code Mode server to the LLM client. |
 | Protocol-native surface | An MCP exposure that owns its own wire-level semantics, such as a direct tool, MCP App, task-capable operation, or future MCP Skills delivery. It may coexist with Code Mode without being tunneled through it. |
@@ -40,9 +43,12 @@
 | Explicit allow-all policy | The SDK helper consumers must deliberately configure when every active model-visible tool is authorized without per-call review. It is never the implicit default. |
 | `ToolProvider` | An adapter that supplies normalized tool metadata and invocation behavior. |
 | `McpToolProvider` | A `ToolProvider` backed by an upstream MCP connection. Multiple instances can contribute tools to one Code Mode catalog. |
+| `LocalToolProvider` | A `ToolProvider` backed by trusted host-side functions. Inputs and JSON outputs cross the same policy, validation, cancellation, limits, and diagnostic boundaries as other tool calls. |
+| `defineTool` | An identity helper that preserves schema-derived input and output types for one local tool definition. It accepts JSON Schema or a Standard JSON Schema-compatible library such as Zod. |
+| `local` | The batteries-included factory that groups application-owned functions under one named tool source. |
 | In-memory test provider | A private deterministic v0.1 fixture used to prove that provider-neutral contracts do not depend on MCP. It is not exported or supported as a local-tool feature. |
 | Provider conformance suite | Shared behavioral tests for discovery, normalization, invocation, results, errors, cancellation, and catalog lifecycle that apply to each provider implementation where relevant. |
-| Tool source | A configured origin of normalized tools. In v0.1, each source is an upstream MCP server; v2 also supports local-function and OpenAPI sources. |
+| Tool source | A configured origin of normalized tools. MCP and local-function sources are implemented; OpenAPI sources are planned. |
 | Source name | A unique configured name that identifies a tool source and becomes its top-level `tools` namespace. It is preserved exactly and is distinct from upstream server metadata. |
 | Source health | The host-side lifecycle state of one configured tool source: connecting, healthy, unavailable, or stopped, with a sanitized reason when unavailable. |
 | Degraded state | An operational Code Mode instance in which at least one configured source is unavailable, including the case where no source is currently healthy. |

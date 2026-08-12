@@ -1,6 +1,6 @@
 # ADR 0018: Prove Provider Neutrality with a Private Test Provider
 
-**Status:** Accepted  
+**Status:** Superseded in part by ADR 0019
 **Date:** 2026-08-09
 
 ## Context

@@ -20,12 +20,15 @@
     "release:publish": "node scripts/publish-packages.mjs",
     "test": "pnpm run build && vitest run",
     "test:package": "node scripts/package-smoke.mjs",
+    "test:registry": "node scripts/registry-canary.mjs",
+    "test:skills": "node scripts/skills-cli-smoke.mjs",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.test.json --pretty false"
   },
   "devDependencies": {
     "@codemodekit/core": "workspace:*",
     "@codemodekit/mcp": "workspace:*",
     "@codemodekit/sandbox-quickjs": "workspace:*",
+    "@codemodekit/skills": "workspace:*",
     "codemodekit": "workspace:*",
     "create-codemodekit": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0-beta.5",

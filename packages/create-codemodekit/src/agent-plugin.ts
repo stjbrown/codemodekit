@@ -67,8 +67,9 @@ export interface SyncAgentPluginSkillResult {
 }
 
 /**
- * Writes the portable Agent Plugins 1.0 wrapper and a compact companion skill.
- * Tool-specific declarations are populated later by syncAgentPluginSkill.
+ * Writes the portable Agent Plugins 1.0 wrapper and a mechanical runtime-skill
+ * baseline. Tool-specific declarations are populated by syncAgentPluginSkill;
+ * domain workflows remain agent- and developer-authored.
  */
 export async function scaffoldAgentPlugin(
   options: ScaffoldAgentPluginOptions,
@@ -249,6 +250,8 @@ description: ${JSON.stringify(description)}
 ---
 
 # Use ${serverName} Code Mode
+
+This generated baseline covers Code Mode mechanics and the live tool catalog. Maintainers should tailor its trigger description, workflows, safety decisions, and examples to the integration's real users before distribution.
 
 Use \`run_typescript\` as the primary interface to the tools wrapped by this server.
 
