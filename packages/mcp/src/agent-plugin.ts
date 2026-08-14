@@ -25,7 +25,11 @@ export interface AgentPluginLoadOptions {
   readonly root: string;
   /** Client-managed persistent writable directory dedicated to this plugin. */
   readonly dataDir: string;
-  /** Client-selected base environment for plugin stdio processes. Defaults to empty. */
+  /**
+   * Client-selected base environment for plugin stdio processes. Defaults to
+   * empty, but the SDK transport still supplies a minimal inherited base
+   * (PATH, HOME, and similar); this is an overlay, not full isolation.
+   */
   readonly baseEnv?: Readonly<Record<string, string>>;
   readonly clientInfo?: {
     readonly name?: string;

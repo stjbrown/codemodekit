@@ -59,12 +59,15 @@ export class CatalogManager {
     if (this.#closed) {
       throw new Error("Code Mode is closed");
     }
+    // Discovery is shared by every caller, so it runs under the manager's
+    // lifetime signal only; a caller's signal ends that caller's wait without
+    // aborting the attempts (failed sources keep reconnecting in background).
     this.#startPromise ??= Promise.allSettled(
       this.#states.map((state) =>
-        this.#attempt(state, combineSignals(signal, this.#lifetimeController.signal)),
+        this.#attempt(state, this.#lifetimeController.signal),
       ),
     ).then(() => undefined);
-    await this.#startPromise;
+    await abortableWait(this.#startPromise, signal);
     return this.#catalog.startupReport;
   }
 
@@ -212,6 +215,29 @@ function positiveInteger(value: number, label: string): void {
   }
 }
 
-function combineSignals(first: AbortSignal, second: AbortSignal): AbortSignal {
-  return AbortSignal.any([first, second]);
+async function abortableWait(
+  promise: Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) {
+    throw abortReason(signal);
+  }
+  let onAbort: (() => void) | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      onAbort = (): void => reject(abortReason(signal));
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(resolve, reject);
+    });
+  } finally {
+    if (onAbort !== undefined) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Catalog start wait was aborted");
 }

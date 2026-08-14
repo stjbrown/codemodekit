@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 
 import {
   CodeModeError,
+  SDK_ERROR_CODES,
   type JsonObject,
   type JsonValue,
   type ModelDiagnostic,
@@ -152,6 +153,9 @@ const TOOL_BOOTSTRAP_SOURCE = `
         if (typeof property !== "string" || Reflect.has(target, property)) {
           return Reflect.get(target, property, receiver);
         }
+        // Avoid turning the source namespace into a thenable: awaiting it
+        // must resolve immediately instead of hanging until the wall limit.
+        if (property === "then") return undefined;
         return Object.freeze(createInvoke(property));
       },
     });
@@ -724,26 +728,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-const SDK_ERROR_CODES: ReadonlySet<string> = new Set([
-  "CODE_COMPILE_FAILED",
-  "CODE_SOURCE_TOO_LARGE",
-  "CODE_UNSAFE_SYNTAX",
-  "EXECUTION_CANCELLED",
-  "EXECUTION_COMPUTE_LIMIT",
-  "EXECUTION_WALL_LIMIT",
-  "FINAL_RESULT_TOO_LARGE",
-  "SANDBOX_RUNTIME_FAILED",
-  "SOURCE_NOT_FOUND",
-  "TOOL_APPROVAL_DENIED",
-  "TOOL_CALL_LIMIT",
-  "TOOL_EXECUTION_FAILED",
-  "TOOL_INPUT_INVALID",
-  "TOOL_NOT_FOUND",
-  "TOOL_RESULT_INVALID",
-  "TOOL_RESULT_TOO_LARGE",
-  "TOOL_TIMEOUT",
-]);
+const SDK_ERROR_CODE_SET: ReadonlySet<string> = new Set(SDK_ERROR_CODES);
 
 function isSdkErrorCode(value: unknown): value is SdkErrorCode {
-  return typeof value === "string" && SDK_ERROR_CODES.has(value);
+  return typeof value === "string" && SDK_ERROR_CODE_SET.has(value);
 }

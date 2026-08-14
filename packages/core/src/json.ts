@@ -10,21 +10,22 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
 export function stringifyJson(value: unknown): string {
-  const seen = new WeakSet<object>();
-  const serialized = JSON.stringify(value, (_key, nestedValue: unknown) => {
-    if (typeof nestedValue === "bigint") {
-      throw new TypeError("BigInt values are not JSON serializable");
-    }
-
-    if (typeof nestedValue === "object" && nestedValue !== null) {
-      if (seen.has(nestedValue)) {
-        throw new TypeError("Circular values are not JSON serializable");
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(value, (_key, nestedValue: unknown) => {
+      if (typeof nestedValue === "bigint") {
+        throw new TypeError("BigInt values are not JSON serializable");
       }
-      seen.add(nestedValue);
+      return nestedValue;
+    });
+  } catch (error) {
+    // JSON.stringify detects true cycles natively; shared non-circular
+    // references are valid JSON and must not be rejected here.
+    if (error instanceof TypeError && /circular/iu.test(error.message)) {
+      throw new TypeError("Circular values are not JSON serializable");
     }
-
-    return nestedValue;
-  });
+    throw error;
+  }
 
   if (serialized === undefined) {
     throw new TypeError("Value is not JSON serializable");

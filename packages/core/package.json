@@ -1,6 +1,6 @@
 {
   "name": "@codemodekit/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Core orchestration, policy, catalogs, and TypeScript compilation for CodeModeKit.",
   "author": "Stephen Brown",
   "license": "Apache-2.0",

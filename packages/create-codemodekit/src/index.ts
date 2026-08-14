@@ -27,6 +27,8 @@ export {
   type SyncAgentPluginSkillResult,
 } from "./agent-plugin.js";
 export {
+  DEFAULT_CODEMODEKIT_VERSION,
+  GENERATED_MCP_CLIENT_VERSION,
   renderServer,
   scaffoldCodeModeMcp,
   type AgentPluginScaffoldOptions,

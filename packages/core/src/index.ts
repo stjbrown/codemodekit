@@ -1,5 +1,6 @@
 export { CodeMode, type CodeModeOptions } from "./code-mode.js";
 export { TypeScriptCompiler } from "./compiler.js";
+export { SDK_ERROR_CODES } from "./contracts.js";
 export type {
   CodeCompiler,
   CodeModeRunRequest,

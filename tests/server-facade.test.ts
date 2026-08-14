@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -156,7 +157,60 @@ describe("codemodekit", () => {
       structuredContent: { ok: true, value: "http" },
     });
   }, 20_000);
+
+  it("rejects DNS-rebinding style Host and Origin headers on loopback binds", async () => {
+    const served = await serveCodeModeHttp({
+      name: "http-guard-test",
+      version: "1.0.0",
+      toolPolicy: allowAllToolCalls(),
+      sources: [
+        mcp.stdio({
+          name: "fixture",
+          command: process.execPath,
+          args: [fixturePath],
+        }),
+      ],
+      port: 0,
+      handleProcessSignals: false,
+    });
+    httpServers.push(served);
+
+    expect(await rawRequestStatus(served.url, { host: "evil.example" })).toBe(403);
+    expect(
+      await rawRequestStatus(served.url, { origin: "http://evil.example" }),
+    ).toBe(403);
+    expect(
+      await rawRequestStatus(served.url, {
+        origin: `http://localhost:${String(served.port)}`,
+      }),
+    ).not.toBe(403);
+  }, 20_000);
 });
+
+function rawRequestStatus(
+  url: string,
+  headers: Record<string, string>,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...headers,
+        },
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode ?? 0));
+      },
+    );
+    request.once("error", reject);
+    request.end("{}");
+  });
+}
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

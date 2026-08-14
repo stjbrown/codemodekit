@@ -2,7 +2,11 @@ export interface McpStdioTransportConfig {
   readonly type: "stdio";
   readonly command: string;
   readonly args?: readonly string[];
-  /** Replaces, rather than merges with, the child environment. */
+  /**
+   * Overrides individual variables; the SDK transport still supplies a
+   * minimal inherited base (PATH, HOME, and similar), so the child does not
+   * receive a fully isolated environment.
+   */
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
   readonly stderr?: "inherit" | "pipe" | "ignore";

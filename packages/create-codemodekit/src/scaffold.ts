@@ -22,7 +22,9 @@ export type { ScaffoldSource } from "./source-template.js";
 
 const PACKAGE_VERSION = readPackageVersion();
 // The generator and batteries-included runtime release independently.
-const DEFAULT_CODEMODEKIT_VERSION = "^0.4.0";
+// Exported so tests can assert it stays satisfiable by the workspace release.
+export const DEFAULT_CODEMODEKIT_VERSION = "^0.5.0";
+export const GENERATED_MCP_CLIENT_VERSION = "2.0.0-beta.5";
 const DEFAULT_CREATE_CODEMODEKIT_VERSION = `^${PACKAGE_VERSION}`;
 
 export interface AgentPluginScaffoldOptions {
@@ -147,7 +149,7 @@ export async function scaffoldCodeModeMcp(
     },
     dependencies: { "codemodekit": codemodekitVersion },
     devDependencies: {
-      "@modelcontextprotocol/client": "2.0.0-beta.5",
+      "@modelcontextprotocol/client": GENERATED_MCP_CLIENT_VERSION,
       ...(agentPluginOptions === undefined
         ? {}
         : { "create-codemodekit": createCodemodekitVersion }),

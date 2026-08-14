@@ -112,26 +112,30 @@ export interface SourceLocation {
 
 export type DiagnosticPhase = "compile" | "sandbox" | "tool" | "policy" | "host";
 
-export type SdkErrorCode =
-  | "CODE_COMPILE_FAILED"
-  | "CODE_SOURCE_TOO_LARGE"
-  | "CODE_UNSAFE_SYNTAX"
-  | "EXECUTION_CANCELLED"
-  | "EXECUTION_COMPUTE_LIMIT"
-  | "EXECUTION_WALL_LIMIT"
-  | "FINAL_RESULT_TOO_LARGE"
-  | "SANDBOX_RUNTIME_FAILED"
-  | "SOURCE_NOT_FOUND"
-  | "SOURCE_UNAVAILABLE"
-  | "TOOL_APPROVAL_DENIED"
-  | "TOOL_CALL_LIMIT"
-  | "TOOL_EXECUTION_FAILED"
-  | "TOOL_INPUT_INVALID"
-  | "TOOL_NOT_FOUND"
-  | "TOOL_RESULT_INVALID"
-  | "TOOL_RESULT_TOO_LARGE"
-  | "TOOL_SCHEMA_UNSUPPORTED"
-  | "TOOL_TIMEOUT";
+/** Canonical list of SDK diagnostic codes; SdkErrorCode derives from it. */
+export const SDK_ERROR_CODES = [
+  "CODE_COMPILE_FAILED",
+  "CODE_SOURCE_TOO_LARGE",
+  "CODE_UNSAFE_SYNTAX",
+  "EXECUTION_CANCELLED",
+  "EXECUTION_COMPUTE_LIMIT",
+  "EXECUTION_WALL_LIMIT",
+  "FINAL_RESULT_TOO_LARGE",
+  "SANDBOX_RUNTIME_FAILED",
+  "SOURCE_NOT_FOUND",
+  "SOURCE_UNAVAILABLE",
+  "TOOL_APPROVAL_DENIED",
+  "TOOL_CALL_LIMIT",
+  "TOOL_EXECUTION_FAILED",
+  "TOOL_INPUT_INVALID",
+  "TOOL_NOT_FOUND",
+  "TOOL_RESULT_INVALID",
+  "TOOL_RESULT_TOO_LARGE",
+  "TOOL_SCHEMA_UNSUPPORTED",
+  "TOOL_TIMEOUT",
+] as const;
+
+export type SdkErrorCode = (typeof SDK_ERROR_CODES)[number];
 
 export interface ModelDiagnostic {
   readonly code: SdkErrorCode;

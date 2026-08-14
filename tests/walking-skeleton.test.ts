@@ -596,6 +596,109 @@ describe("M0 walking skeleton", () => {
     });
   });
 
+  it("preserves SOURCE_UNAVAILABLE when the tool error goes uncaught", async () => {
+    const unavailable = new InMemoryTestToolProvider({
+      sourceName: "offline",
+      tools: [],
+      startError: new Error("offline"),
+    });
+    const codeMode = createCodeModeWithProviders(
+      [unavailable],
+      allowAllToolCalls(),
+      undefined,
+      { initialDelayMs: 1_000, maxDelayMs: 1_000, jitterRatio: 0 },
+    );
+
+    const result = await codeMode.run({
+      code: `
+        await tools.offline.echo({ value: "hello" });
+        return { reached: true };
+      `,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      diagnostic: { code: "SOURCE_UNAVAILABLE" },
+    });
+  });
+
+  it("resolves awaiting a source namespace instead of hanging to the wall limit", async () => {
+    const codeMode = createCodeMode(fixtureProvider());
+
+    const result = await codeMode.run({
+      code: `
+        const known = await tools.test;
+        const unknown = await tools.missing;
+        return known === tools.test && typeof unknown === "object";
+      `,
+    });
+
+    expect(result).toMatchObject({ ok: true, value: true });
+  }, 10_000);
+
+  it("accepts provider results containing shared non-circular references", async () => {
+    const shared = { label: "shared" };
+    const sharedTool: InMemoryTool = {
+      name: "shared",
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: () => ({
+        content: [{ type: "text", text: "shared" }],
+        structuredContent: { first: shared, second: shared },
+      }),
+    };
+    const provider = new InMemoryTestToolProvider({
+      sourceName: "test",
+      tools: [sharedTool],
+    });
+    const codeMode = createCodeModeWithProviders([provider]);
+
+    const result = await codeMode.run({
+      code: `
+        const response = await tools.test.shared({});
+        return response.structuredContent;
+      `,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { first: { label: "shared" }, second: { label: "shared" } },
+    });
+  });
+
+  it("still rejects circular provider results", async () => {
+    const circular: Record<string, unknown> = { label: "circular" };
+    circular.self = circular;
+    const circularTool: InMemoryTool = {
+      name: "circular",
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: () => ({
+        content: [{ type: "text", text: "circular" }],
+        structuredContent: circular as never,
+      }),
+    };
+    const provider = new InMemoryTestToolProvider({
+      sourceName: "test",
+      tools: [circularTool],
+    });
+    const codeMode = createCodeModeWithProviders([provider]);
+
+    const result = await codeMode.run({
+      code: `
+        try {
+          await tools.test.circular({});
+          return { reached: true };
+        } catch (error) {
+          return { code: error.code };
+        }
+      `,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { code: "TOOL_RESULT_INVALID" },
+    });
+  });
+
   it("returns SOURCE_NOT_FOUND and TOOL_NOT_FOUND through the lazy namespace", async () => {
     const codeMode = createCodeMode(fixtureProvider());
     const result = await codeMode.run({
